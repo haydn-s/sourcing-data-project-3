@@ -118,7 +118,8 @@ Fill in target dates at kickoff, working backward from the due date. Leave a buf
 - [ ] Make every decision in [§2](#2-kickoff-meeting-agenda)
 - [x] Invite Jothi as a repo collaborator with write access. **Jothi: accept the invite** so your reviews count toward branch protection
 - [x] Protect `main` with a ruleset: PR required, 1 approval, **CI passed** check, no bypass
-- [x] Add commitlint (local hook + CI), pre-commit (ruff), the CI workflow, a PR template, and `.gitignore`
+- [x] Add commitlint (local hook + CI), pre-commit (gitleaks, ruff, file checks), the CI workflow, a PR template, and `.gitignore`
+- [x] Squash-merge only, auto-delete merged branches, CODEOWNERS, Dependabot, and secret scanning with push protection
 - [ ] Set up the cloud account (provider TBD) with billing, a budget alert, and access for both of us
 - [ ] Create the W&B project (team or public) and give both of us access
 - [ ] Scaffold the code layout: folders, `.env.example`, empty `config.yaml`, `requirements.txt`
@@ -198,14 +199,15 @@ docs/readme-results
 - Give the PR a Conventional Commit title. CI lints it
 - Link the task ID (e.g., "Implements A5") and describe how you tested it. The [PR template](../.github/pull_request_template.md) prompts for both
 - Keep PRs small, ideally reviewable in under 15 minutes
-- Branch protection on `main` requires **1 approval from your partner** and a green **CI passed** check before merging. New pushes dismiss earlier approvals
-- Delete the branch after merging
+- CODEOWNERS automatically requests your partner's review. Branch protection on `main` requires **1 approval** and a green **CI passed** check before merging. New pushes dismiss earlier approvals
+- **Squash and merge** is the only option. The PR title becomes the commit on `main`, and the branch is deleted automatically
+- Dependabot PRs (weekly) need a review too. Skim the changelog, and merge if CI is green
 
 **CI grows with the project.** Add jobs to [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) as each phase lands, and list each one under `ci-passed.needs`. Branch protection only requires the `CI passed` gate, so it never needs updating:
 
 | Phase | Add to CI |
 |---|---|
-| Now | commitlint (commits + PR title), pre-commit hooks (ruff), pytest |
+| Now | commitlint (commits + PR title), gitleaks secret scan, pre-commit hooks (file checks, ruff), pytest |
 | Track A | Unit tests for config loading and `features.py` (picked up by the existing pytest job) |
 | Track B | API tests with FastAPI `TestClient`. A Docker build check (`docker build`, then smoke-test `/health`) |
 | Deploy | CD job: on push to `main`, build and deploy the API to the cloud platform (provider TBD). Streamlit Community Cloud redeploys from `main` on its own |
@@ -223,7 +225,7 @@ gh api -X PUT "repos/haydn-s/sourcing-data-project-3/rulesets/$RULESET_ID" --inp
 |---|---|
 | Cloud deployment takes much longer than expected | Walking skeleton in Phase 1. Deploy the stub model early |
 | Apple Silicon image fails on the cloud platform (`exec format error`) | Build with `docker buildx build --platform linux/amd64` |
-| Credentials leak into git | `.gitignore` covers `.env` and key files. Prefer the platform's built-in service identity over long-lived keys |
+| Credentials leak into git | `.gitignore` covers `.env` and key files. gitleaks runs on commit and in CI, and GitHub push protection checks every push. Prefer the platform's built-in service identity over long-lived keys. If a key leaks, rotate it first |
 | Surprise cloud bill | Budget alert. Free tiers and scale-to-zero where available. Small dataset. Tear down after grading |
 | Someone skips the local hooks (`git commit --no-verify`) | CI re-runs commitlint and the pre-commit hooks on every PR, and branch protection blocks the merge until they pass |
 | Required review stalls merging when one of us is busy | Keep PRs small. Agree at kickoff to review within a day |

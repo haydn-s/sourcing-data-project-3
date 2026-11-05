@@ -46,6 +46,8 @@
     - [Commit messages](#commit-messages)
     - [CI checks](#ci-checks)
     - [Branch protection](#branch-protection)
+    - [Secret scanning](#secret-scanning)
+    - [Dependency updates](#dependency-updates)
   - [License \& Acknowledgments](#license--acknowledgments)
 
 ---
@@ -146,10 +148,12 @@ TODO: one paragraph on what worked, what didn't, and where the model fails (see 
 ├── entrypoint.sh            # Dispatches `train` | `serve`
 ├── .env.example             # Required environment variables (no secrets committed)
 ├── .commitlintrc.yaml       # Commit message rules (Conventional Commits)
-├── .pre-commit-config.yaml  # Local git hooks: commitlint, ruff
+├── .pre-commit-config.yaml  # Local git hooks: commitlint, gitleaks, ruff, file checks
 ├── .github/
 │   ├── workflows/ci.yml     # CI checks run on every PR
 │   ├── rulesets/            # Branch protection for main, kept as code
+│   ├── CODEOWNERS           # Auto-requests partner review on every PR
+│   ├── dependabot.yml       # Weekly dependency update PRs
 │   └── pull_request_template.md
 ├── scripts/
 │   └── upload_data.py       # One-time: download raw data → clean → upload to cloud storage
@@ -191,11 +195,11 @@ git clone git@github.com:haydn-s/sourcing-data-project-3.git
 cd sourcing-data-project-3
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
-pre-commit install     # installs the commit-msg (commitlint) and pre-commit (ruff) hooks
+pre-commit install     # installs the commit-msg (commitlint) and pre-commit (gitleaks, ruff, file checks) hooks
 cp .env.example .env   # then fill in values
 ```
 
-`pre-commit install` is required once per clone. Without it, bad commit messages won't be caught until CI fails on your PR.
+`pre-commit install` is required once per clone. Without it, problems aren't caught until CI fails on your PR. The first commit afterward takes a minute or two while pre-commit builds the hook tools; after that, hooks run in seconds.
 
 ### Authenticate
 
@@ -400,7 +404,8 @@ commitlint runs in two places:
 | Job | What it checks |
 |---|---|
 | **Commit messages & PR title** | commitlint on each commit in the PR and on the PR title |
-| **Lint (pre-commit hooks)** | `pre-commit run --all-files`: ruff lint and format, plus any hooks we add later |
+| **Secret scan (gitleaks)** | Scans every commit in the PR for API keys, tokens, and private keys |
+| **Lint (pre-commit hooks)** | `pre-commit run --all-files`: file checks (large files, whitespace, YAML/JSON/TOML syntax) plus ruff lint and format |
 | **Tests (pytest)** | `pytest` (passes with a notice until the first tests exist) |
 | **CI passed** | Gate job that succeeds only if every job above passed or was skipped. Branch protection requires this one check |
 
@@ -421,7 +426,27 @@ pre-commit run --all-files
 - Approvals are dismissed when new commits are pushed
 - All review conversations must be resolved
 - The **CI passed** check must succeed
+- **Squash merge only.** Each PR becomes one commit on `main`, titled with the PR title, so `main` history follows Conventional Commits. Merged branches are deleted automatically
 - No bypass, admins included
+
+[`.github/CODEOWNERS`](.github/CODEOWNERS) lists both of us, so GitHub automatically requests a review from whoever didn't open the PR.
+
+### Secret scanning
+
+We check for leaked credentials (cloud keys, W&B API keys, tokens) at several points:
+
+| Where | When | Tool |
+|---|---|---|
+| Your machine | `git commit` | gitleaks pre-commit hook. Blocks the commit, so the secret never enters git history |
+| GitHub | `git push` | GitHub push protection. Rejects pushes containing known provider token formats |
+| CI | Every PR | gitleaks scans each commit in the PR. A finding fails **CI passed** and blocks the merge |
+| GitHub | Always | GitHub secret scanning. Watches the full history and raises alerts in the **Security** tab |
+
+**If a secret leaks, revoke or rotate it at the provider first.** Deleting it from the code doesn't help, because it stays in git history and may already have been copied. For a false positive, add `# gitleaks:allow` to the end of the line.
+
+### Dependency updates
+
+[Dependabot](.github/dependabot.yml) opens weekly PRs that update pip packages, GitHub Actions, and pre-commit hooks, plus PRs for security fixes. They go through the same CI and review as any other PR.
 
 ## License & Acknowledgments
 
