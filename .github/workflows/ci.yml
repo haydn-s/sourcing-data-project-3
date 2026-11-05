@@ -50,6 +50,35 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
 
+  secrets:
+    name: Secret scan (gitleaks)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks (version pinned in .pre-commit-config.yaml)
+        working-directory: ${{ runner.temp }}
+        env:
+          CONFIG: ${{ github.workspace }}/.pre-commit-config.yaml
+        run: |
+          version=$(yq '.repos[] | select(.repo == "https://github.com/gitleaks/gitleaks") | .rev' "$CONFIG")
+          version=${version#v}
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${version}"
+          curl -sSfLO "${url}/gitleaks_${version}_linux_x64.tar.gz"
+          curl -sSfLO "${url}/gitleaks_${version}_checksums.txt"
+          grep " gitleaks_${version}_linux_x64.tar.gz\$" "gitleaks_${version}_checksums.txt" | sha256sum --check
+          tar -xzf "gitleaks_${version}_linux_x64.tar.gz" gitleaks
+
+      - name: Scan every commit in this PR
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          "$RUNNER_TEMP/gitleaks" git --log-opts="${BASE_SHA}..${HEAD_SHA}" --redact --verbose .
+
   lint:
     name: Lint (pre-commit hooks)
     runs-on: ubuntu-latest
@@ -105,7 +134,7 @@ jobs:
     # `needs` succeeded or was skipped, so adding jobs never means editing
     # branch protection.
     if: always()
-    needs: [commitlint, lint, test]
+    needs: [commitlint, secrets, lint, test]
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any job failed or was cancelled
