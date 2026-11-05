@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  pull_request:
+    # `edited` re-runs CI when the PR title changes, so the title lint stays current.
+    types: [opened, edited, reopened, synchronize]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "24"
+  COMMITLINT_VERSION: "21.2.4"
+
+jobs:
+  commitlint:
+    name: Commit messages & PR title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install commitlint
+        run: >-
+          npm install --no-save
+          "@commitlint/cli@${COMMITLINT_VERSION}"
+          "@commitlint/config-conventional@${COMMITLINT_VERSION}"
+
+      - name: Lint commit messages in this PR
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npx commitlint --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
+
+      - name: Lint PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
+
+  lint:
+    name: Lint (pre-commit hooks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dev tooling
+        run: pip install -r requirements-dev.txt
+
+      - name: Run pre-commit hooks on all files
+        run: pre-commit run --all-files --show-diff-on-failure
+
+  test:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        # pytest exits with code 5 when it collects no tests. Treat that as a pass
+        # until the first tests land, then this behaves like plain `pytest`.
+        run: |
+          set +e
+          pytest
+          status=$?
+          if [ "$status" -eq 5 ]; then
+            echo "::notice::No tests collected yet."
+            exit 0
+          fi
+          exit "$status"
+
+  # Add jobs above as the project grows, and list each one under `needs` below.
+  # Planned:
+  #   docker: build the image and smoke-test `serve` once the Dockerfile lands
+  #   deploy: CD to the cloud platform on push to main (provider TBD)
+
+  ci-passed:
+    name: CI passed
+    # The only check branch protection requires. It passes when every job in
+    # `needs` succeeded or was skipped, so adding jobs never means editing
+    # branch protection.
+    if: always()
+    needs: [commitlint, lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+
+      - name: All checks passed
+        run: echo "All CI jobs passed or were skipped."
