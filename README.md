@@ -12,6 +12,7 @@
 | 📈 **Experiment tracking** | TODO: `https://wandb.ai/<entity>/<project>` |
 
 *AIPI 510, Module Project 3 (Data/ML Engineering), Duke University*
+**Due:** Tuesday, November 24, 2026, 11:30 AM EST
 **Team:** Haydn Stucker ([haydn-s](https://github.com/haydn-s)) · Jothi Gupta ([jothigup](https://github.com/jothigup))
 
 ---
@@ -26,10 +27,12 @@
   - [Problem Definition \& Evaluation](#problem-definition--evaluation)
   - [Model](#model)
   - [Cloud Services](#cloud-services)
+  - [Language Choice: Python vs. Go](#language-choice-python-vs-go)
   - [Project Structure](#project-structure)
   - [Getting Started](#getting-started)
     - [Prerequisites](#prerequisites)
     - [Install](#install)
+    - [The PyDev environment](#the-pydev-environment)
     - [Authenticate](#authenticate)
     - [Environment variables](#environment-variables)
   - [Usage](#usage)
@@ -44,10 +47,12 @@
   - [Ethics, Limitations \& Responsible Use](#ethics-limitations--responsible-use)
   - [Contributing](#contributing)
     - [Commit messages](#commit-messages)
+    - [Code style and the pre-PR check](#code-style-and-the-pre-pr-check)
     - [CI checks](#ci-checks)
     - [Branch protection](#branch-protection)
     - [Secret scanning](#secret-scanning)
     - [Dependency updates](#dependency-updates)
+    - [Planned tooling](#planned-tooling)
   - [License \& Acknowledgments](#license--acknowledgments)
 
 ---
@@ -135,6 +140,66 @@ TODO: one paragraph on what worked, what didn't, and where the model fails (see 
 | **Streamlit Community Cloud** | Hosts the public front-end, deployed straight from this repo |
 | **GitHub Actions** | CI checks on every pull request (see [CI checks](#ci-checks)) |
 
+## Language Choice: Python vs. Go
+
+We looked at Go for two reasons: it's widely used in industry, and this pipeline will be reused in a Deep Learning course in Spring 2027. **Decision: Python for this project and for the course. Go is worth learning for the serving and infrastructure layer, not for model development.**
+
+**Where Go is the industry standard.** Go dominates cloud infrastructure. Docker, Kubernetes, Terraform, and Prometheus are all written in it. It's also growing in ML *infrastructure*: Ollama's server is mostly Go, and the W&B Python SDK ships a Go core service. Model *development* (training, research, experimentation) is still overwhelmingly Python. PyTorch, TensorFlow/Keras, JAX, scikit-learn, and Hugging Face are all Python-first.
+
+### Ecosystem (snapshot, November 2026)
+
+| Need | Python | Go |
+|---|---|---|
+| Arrays and numerics | NumPy, SciPy | gonum (active) |
+| DataFrames | pandas | No maintained equivalent (gota is archived) |
+| Classical ML | scikit-learn, XGBoost, statsmodels | GoLearn (no commits since January 2024). Otherwise, write it yourself |
+| Deep learning | PyTorch, TensorFlow/Keras, JAX | GoMLX (active: XLA backend for CPU/GPU/TPU, plus pure-Go and ONNX backends). Gorgonia (inactive since 2024) and the gotch libtorch bindings (inactive since early 2025) |
+| Pretrained models | Hugging Face, torchvision, Keras | Load ONNX exports through ONNX Runtime (onnxruntime_go, active) |
+| Notebooks and plots | Jupyter, matplotlib, seaborn, plotly | GoNB (a Go kernel for Jupyter), gonum/plot |
+| Experiment tracking | Official W&B and MLflow SDKs | No official client libraries. Call their HTTP APIs directly |
+| Serving an API | FastAPI, Flask | Standard library `net/http`. Excellent |
+| Front-end | Streamlit, Gradio | None. You'd build a separate web app |
+
+### Feasibility
+
+- **This project.** The assignment names FastAPI or Flask for the API, Streamlit/Gradio/NextJS for the front-end, MLflow or W&B for tracking, and `requirements.txt` or `environment.yaml` for dependencies. The required parts have to be Python, so Go could only be an *extra*.
+- **Training in Go.** Possible, but we'd hand-write the preprocessing that scikit-learn pipelines give us for free, and we'd lose the W&B SDK.
+- **Serving in Go.** The most realistic use. Export the trained scikit-learn pipeline to ONNX with `skl2onnx`, then serve it from a Go `net/http` service using ONNX Runtime. The catch: ONNX Runtime is a C library, so the Go build needs cgo, and the Docker image needs the library.
+- **The Deep Learning course.** Course materials, assignments, and pretrained models will be in PyTorch or TensorFlow. Working in Go would mean translating every example. GoMLX makes it possible, but we'd be early adopters with few examples to learn from.
+
+### Learning curve
+
+| | Python | Go |
+|---|---|---|
+| The language | We already know it | Small and quick to learn: 25 keywords, one standard formatter (`gofmt`), fast compiles, static types. Expect days to a few weeks to become productive |
+| ML in that language | Huge ecosystem of tutorials, Q&A, and course material | Steep. Few examples, no notebook-first culture, and native libraries need cgo, which complicates builds |
+| Day-to-day friction | Environment and package management (handled here by PyDev and `make venv`). Type errors show up only at runtime | Verbose explicit error handling. More code for exploratory work |
+
+### Anticipated performance
+
+Most ML computation doesn't run in Python at all. NumPy, pandas, scikit-learn, PyTorch, and TensorFlow hand the heavy work to optimized C, C++, and CUDA code, so the calling language matters less than you'd expect.
+
+| Workload | Likely faster | Why |
+|---|---|---|
+| Model training, especially on GPU | Python, or a tie at best | Both end up in native kernels, and Python's GPU support (CUDA, Apple MPS) is far more mature |
+| Vectorized data prep | Tie | NumPy and pandas operations already run in C |
+| Hand-written loops over rows | Go, often by an order of magnitude or more | Compiled vs. interpreted. Vectorizing the Python version closes most of the gap |
+| API latency at our traffic (a class demo) | Tie | Model inference dominates request time |
+| API throughput and memory under heavy load | Go | Goroutines handle many concurrent requests in one lightweight process. Python servers scale by adding worker processes |
+| Container size and cold start | Go | A plain Go service compiles to one binary, so images can be tens of MB (ONNX Runtime adds its library). Python plus ML libraries runs from hundreds of MB to several GB. This matters most on serverless platforms that start containers on demand |
+| Speed of experimenting | Python | Notebooks, libraries, examples |
+
+### Recommendation
+
+Keep Python as the project language. For hands-on Go experience without risking the deadline, the best fit is an **optional stretch goal**, once everything required is done:
+
+1. Export our model to ONNX.
+2. Write a small Go service that serves the same `/predict` request and response.
+3. Deploy it next to the FastAPI service.
+4. Load-test both (e.g., with [`hey`](https://github.com/rakyll/hey) or [k6](https://k6.io/)) and compare latency, throughput, memory, image size, and cold start.
+
+That turns the table above into measured numbers. It's listed as a stretch task in the [Development Plan](docs/DEVELOPMENT_PLAN.md#stretch-optional-go-inference-service).
+
 ## Project Structure
 
 > Proposed layout. We'll update it as the code lands.
@@ -142,8 +207,11 @@ TODO: one paragraph on what worked, what didn't, and where the model fails (see 
 ```
 .
 ├── config.yaml              # All pipeline parameters (data paths, features, split, model, tracking)
-├── requirements.txt         # Pipeline + API dependencies (pinned)
+├── requirements.txt         # Pipeline + API runtime dependencies (pinned; used by Docker and CI)
 ├── requirements-dev.txt     # Dev tooling: pre-commit, pytest
+├── requirements-pydev.txt   # PyDev environment: data science + deep learning stack (local only)
+├── pyproject.toml           # Shared code style (ruff) and pytest settings
+├── Makefile                 # Dev commands: make venv, setup, format, lint, test, pr-ready
 ├── Dockerfile               # One image with `train` and `serve` entry points
 ├── entrypoint.sh            # Dispatches `train` | `serve`
 ├── .env.example             # Required environment variables (no secrets committed)
@@ -183,7 +251,9 @@ TODO: one paragraph on what worked, what didn't, and where the model fails (see 
 
 ### Prerequisites
 
-- Python 3.12 (matches CI)
+- [uv](https://docs.astral.sh/uv/) (recommended, and it installs Python 3.12 for you) or Python 3.12
+- `make` (preinstalled on macOS and Linux. On Windows, use WSL or Git Bash)
+- [Node.js](https://nodejs.org/) 22.12+ (`make pr-ready` uses it to run commitlint)
 - [Docker](https://docs.docker.com/get-docker/)
 - TODO: access to our cloud provider (and its CLI, if needed)
 - A [Weights & Biases](https://wandb.ai/) account
@@ -193,13 +263,55 @@ TODO: one paragraph on what worked, what didn't, and where the model fails (see 
 ```bash
 git clone git@github.com:haydn-s/sourcing-data-project-3.git
 cd sourcing-data-project-3
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt -r requirements-dev.txt
-pre-commit install     # installs the commit-msg (commitlint) and pre-commit (gitleaks, ruff, file checks) hooks
+make venv              # creates PyDev (Python 3.12) and installs requirements-pydev.txt
+source PyDev/bin/activate
+make setup             # installs the git hooks: commitlint, gitleaks, ruff, file checks
 cp .env.example .env   # then fill in values
 ```
 
+`make venv` uses uv if it's installed, and falls back to `python3.12 -m venv`. Without `make`:
+
+```bash
+uv venv --seed --python 3.12 PyDev   # or: python3.12 -m venv PyDev
+source PyDev/bin/activate            # Windows: PyDev\Scripts\activate
+pip install -r requirements-pydev.txt
+pre-commit install
+```
+
 `pre-commit install` is required once per clone. Without it, problems aren't caught until CI fails on your PR. The first commit afterward takes a minute or two while pre-commit builds the hook tools; after that, hooks run in seconds.
+
+### The PyDev environment
+
+PyDev is our shared local environment for data science and deep learning work (Python 3.12). It's defined in [`requirements-pydev.txt`](requirements-pydev.txt), with every version pinned:
+
+| Area | Libraries |
+|---|---|
+| Numerics and data | numpy, pandas, scipy, pyarrow |
+| Statistics and classical ML | statsmodels, scikit-learn, xgboost |
+| Deep learning | torch, torchvision, tensorflow (includes Keras) |
+| Visualization | matplotlib, seaborn, plotly, shap |
+| Notebooks | jupyterlab, ipykernel, ipywidgets |
+| Tracking and utilities | wandb, pyyaml, python-dotenv, tqdm |
+| Dev tooling | pre-commit, pytest (from `requirements-dev.txt`) |
+
+To use PyDev from Jupyter or VS Code notebooks, register it as a kernel once:
+
+```bash
+python -m ipykernel install --user --name PyDev
+```
+
+**Hardware notes.** On Apple Silicon, PyTorch can use the GPU through MPS (`torch.backends.mps.is_available()`), while TensorFlow runs on the CPU unless you add Apple's optional `tensorflow-metal` plugin. torch 2.12 and newer need macOS 14 or later.
+
+**Requirements files.** Each environment installs only what it needs:
+
+| File | Installed by | Contents |
+|---|---|---|
+| `requirements.txt` | Docker image, CI | Runtime dependencies for the pipeline and API (added with the code) |
+| `requirements-dev.txt` | CI, PyDev | pre-commit, pytest |
+| `requirements-pydev.txt` | PyDev (local only) | The data science and deep learning stack above, plus dev tooling |
+| `frontend/requirements.txt` | Streamlit Community Cloud | Front-end only (added with the front-end) |
+
+Keeping torch and TensorFlow out of `requirements.txt` keeps the API's Docker image and CI runs small. When `requirements.txt` lands, PyDev will include it, and shared pins such as scikit-learn must match: a model saved with one scikit-learn version may not load in another.
 
 ### Authenticate
 
@@ -397,6 +509,41 @@ commitlint runs in two places:
 - **Locally**, as a `commit-msg` git hook installed by `pre-commit install`. It rejects bad messages before the commit is created.
 - **In CI**, on every commit in a PR *and* on the PR title.
 
+### Code style and the pre-PR check
+
+Our code style lives in [`pyproject.toml`](pyproject.toml), so the hooks, CI, and editors all apply the same rules:
+
+- **Formatter:** `ruff format`, 100-character lines, double quotes
+- **Linter:** `ruff check` with pycodestyle, pyflakes, import sorting, bugbear (likely bugs), pyupgrade, naming, simplify, comprehensions, NumPy, and ruff's own rules. sklearn-style names like `X_train` are allowed
+- To change the style, edit `pyproject.toml` in a PR
+
+**Before opening a PR, run:**
+
+```bash
+make pr-ready PR_TITLE="feat(api): add /predict endpoint"
+```
+
+It stops at the first failure. It checks that:
+
+1. You're not on `main`, and the git hooks are installed
+2. You have no uncommitted changes and your branch isn't behind `main` (warnings only)
+3. Every pre-commit hook passes on all files (`make lint`)
+4. The tests pass (`make test`)
+5. Every commit on your branch, and the PR title if you pass one, follows Conventional Commits
+
+Passing locally means CI should pass too. The one check CI adds is a gitleaks scan of every commit in the PR; locally, gitleaks runs on each commit through the hook. `make format` auto-fixes what it can.
+
+| Command | What it does |
+|---|---|
+| `make venv` | Create or update the PyDev environment |
+| `make setup` | Install dev tooling and git hooks (run inside PyDev) |
+| `make format` | Auto-fix formatting and lint issues in all files |
+| `make lint` | Run every pre-commit hook on all files |
+| `make test` | Run the tests |
+| `make lint-commits` | Lint the commit messages on your branch |
+| `make lint-title PR_TITLE="..."` | Lint a PR title |
+| `make pr-ready` | Everything above, before you open a PR |
+
 ### CI checks
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull request and every push to `main`:
@@ -405,17 +552,13 @@ commitlint runs in two places:
 |---|---|
 | **Commit messages & PR title** | commitlint on each commit in the PR and on the PR title |
 | **Secret scan (gitleaks)** | Scans every commit in the PR for API keys, tokens, and private keys |
-| **Lint (pre-commit hooks)** | `pre-commit run --all-files`: file checks (large files, whitespace, YAML/JSON/TOML syntax) plus ruff lint and format |
-| **Tests (pytest)** | `pytest` (passes with a notice until the first tests exist) |
+| **Lint (pre-commit hooks)** | `make lint`: file checks (large files, whitespace, YAML/JSON/TOML syntax) plus ruff lint and format |
+| **Tests (pytest)** | `make test` (passes with a notice until the first tests exist) |
 | **CI passed** | Gate job that succeeds only if every job above passed or was skipped. Branch protection requires this one check |
 
 To add a check, add a job to `ci.yml` and list it under `ci-passed.needs`. Branch protection doesn't need to change. Planned additions: a Docker build check once the `Dockerfile` lands, and deployment on merge once we pick a cloud platform.
 
-Run the same lint checks locally with:
-
-```bash
-pre-commit run --all-files
-```
+CI calls the same `make` targets you run locally. See [Code style and the pre-PR check](#code-style-and-the-pre-pr-check).
 
 ### Branch protection
 
@@ -447,6 +590,15 @@ We check for leaked credentials (cloud keys, W&B API keys, tokens) at several po
 ### Dependency updates
 
 [Dependabot](.github/dependabot.yml) opens weekly PRs that update pip packages, GitHub Actions, and pre-commit hooks, plus PRs for security fixes. They go through the same CI and review as any other PR.
+
+### Planned tooling
+
+These are deferred until the code exists:
+
+- **Editor format-on-save.** Shared `.vscode/settings.json` and `extensions.json` that install the Ruff extension and format on save, once we confirm we both use VS Code or Cursor. Until then, `make format` does the same job.
+- **Project-specific checks as pre-commit hooks.** Small scripts in `scripts/hooks/` that pre-commit runs on every commit. For example:
+  - Every feature in `config.yaml` appears in the API's request schema (after task B1)
+  - Notebooks are committed with outputs cleared (once `notebooks/` has content)
 
 ## License & Acknowledgments
 

@@ -3,7 +3,7 @@
 *Living document. Review and finalize at the kickoff meeting, then update as plans change.*
 
 **Team:** Haydn Stucker · Jothi TODO
-**Due date:** TODO
+**Due date:** Tuesday, November 24, 2026, 11:30 AM EST
 **Kickoff:** TODO
 
 ---
@@ -83,6 +83,8 @@ flowchart LR
 | Cloud | TODO: storage + API hosting |
 | Front-end | Streamlit + `requests`, hosted on Streamlit Community Cloud |
 | Tests | pytest, FastAPI `TestClient` |
+| Local environment | PyDev: a Python 3.12 venv built from `requirements-pydev.txt` with `make venv` |
+| Code style | ruff, configured in `pyproject.toml`. `make pr-ready` before every PR |
 | CI & conventions | GitHub Actions, commitlint, pre-commit (ruff) |
 
 The proposed repo layout is in the [README](../README.md#project-structure).
@@ -111,20 +113,32 @@ POST /predict  → body: one JSON object with one key per feature
 
 ## 6. Milestones & Tasks
 
-Fill in target dates at kickoff, working backward from the due date. Leave a buffer of at least 2–3 days before the deadline for integration problems and documentation.
+**Proposed schedule** (worked backward from the deadline; confirm at kickoff):
 
-### M0: Kickoff & repo setup *(together)* · Target: TODO
+| Milestone | Target |
+|---|---|
+| M0: Kickoff & setup | Sat, Nov 7 |
+| Walking skeleton: stub model deployed and called by the live app | Thu, Nov 12 |
+| Phase 1 complete (both tracks) | Sun, Nov 15 |
+| Phase 2: Integration | Wed, Nov 18 |
+| Phase 3: Docs, ethics, polish | Sat, Nov 21 |
+| Buffer for surprises | Sun, Nov 22 – Mon, Nov 23 |
+| **Submit** (aim for the night before) | **Tue, Nov 24, 11:30 AM EST** |
+
+### M0: Kickoff & repo setup *(together)* · Target: Sat, Nov 7
 
 - [ ] Make every decision in [§2](#2-kickoff-meeting-agenda)
 - [x] Invite Jothi as a repo collaborator with write access. **Jothi: accept the invite** so your reviews count toward branch protection
 - [x] Protect `main` with a ruleset: PR required, 1 approval, **CI passed** check, no bypass
 - [x] Add commitlint (local hook + CI), pre-commit (gitleaks, ruff, file checks), the CI workflow, a PR template, and `.gitignore`
 - [x] Squash-merge only, auto-delete merged branches, CODEOWNERS, Dependabot, and secret scanning with push protection
+- [x] PyDev environment (`make venv`), shared ruff style (`pyproject.toml`), and `make pr-ready`
+- [ ] Jothi: run `make venv`, `source PyDev/bin/activate`, and `make setup`
 - [ ] Set up the cloud account (provider TBD) with billing, a budget alert, and access for both of us
 - [ ] Create the W&B project (team or public) and give both of us access
 - [ ] Scaffold the code layout: folders, `.env.example`, empty `config.yaml`, `requirements.txt`
 
-### Phase 1: Parallel build
+### Phase 1: Parallel build · Target: Sun, Nov 15 (walking skeleton by Thu, Nov 12)
 
 #### Track A: Data & training pipeline
 
@@ -151,21 +165,31 @@ Fill in target dates at kickoff, working backward from the due date. Leave a buf
 
 > **Walking-skeleton checkpoint:** by the end of Phase 1 the stub model should be served from the cloud platform and called by the deployed Streamlit app, even if Track A's real model isn't finished.
 
-### Phase 2: Integration *(together)* · Target: TODO
+### Phase 2: Integration *(together)* · Target: Wed, Nov 18
 
 - [ ] Point the deployed API's `MODEL_URI` at the real model in cloud storage and redeploy
 - [ ] End-to-end test: run training in Docker → model lands in cloud storage → redeploy → front-end shows the new `model_version`
 - [ ] Do a fresh-clone reproducibility test: one of us follows the README from scratch on a clean machine or folder
 - [ ] Improve the front-end: input validation, sensible defaults, maybe a chart (probability bar, feature importance) to make it interactive and intuitive
 
-### Phase 3: Documentation, ethics & submission *(together)* · Target: TODO
+### Phase 3: Documentation, ethics & submission *(together)* · Target: Sat, Nov 21
 
 - [ ] Fill in every **TODO** in the README: dataset, metric, results, links to the live app, API, and W&B
 - [ ] Write the ethics & limitations section (questions are in the README)
 - [ ] Check the requirements list ([§10](#10-requirements-checklist)). Every box ticked
 - [ ] Clean up commit history and branches. Confirm both of us have merged PRs
 - [ ] Confirm the deployed app and API are still live on submission day
-- [ ] Submit
+- [ ] Submit by **Tue, Nov 24, 11:30 AM EST**
+
+### Stretch (optional): Go inference service
+
+Only after everything above is done, and never at the deadline's expense. See the README's [Python vs. Go](../README.md#language-choice-python-vs-go) comparison for why this is the best-fit way to learn Go here.
+
+| ID | Task | Done when |
+|---|---|---|
+| S1 | Export the trained scikit-learn pipeline to ONNX (`skl2onnx`). Check that its predictions match the joblib model's | Predictions match on the test set |
+| S2 | Go `net/http` service that serves the same `/predict` contract with ONNX Runtime (`onnxruntime_go`), in its own Dockerfile | `curl` returns the same predictions as the FastAPI service |
+| S3 | Deploy it next to the FastAPI service and load-test both with `hey` or k6 | Latency, throughput, memory, image size, and cold start recorded in the README |
 
 ## 7. Work Split
 
@@ -196,6 +220,7 @@ docs/readme-results
 
 **Pull requests.**
 
+- Run `make pr-ready PR_TITLE="..."` before opening the PR. It runs the same checks as CI
 - Give the PR a Conventional Commit title. CI lints it
 - Link the task ID (e.g., "Implements A5") and describe how you tested it. The [PR template](../.github/pull_request_template.md) prompts for both
 - Keep PRs small, ideally reviewable in under 15 minutes
