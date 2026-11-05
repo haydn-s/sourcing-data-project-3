@@ -1,0 +1,10 @@
+# Commit message rules: https://www.conventionalcommits.org
+# Enforced locally by the commit-msg hook (.pre-commit-config.yaml) and in CI
+# on every PR commit and the PR title (.github/workflows/ci.yml).
+extends:
+  - "@commitlint/config-conventional"
+
+rules:
+  # Bodies and footers often hold long URLs or trailers; don't fail on line length.
+  body-max-line-length: [0, always]
+  footer-max-line-length: [0, always]
