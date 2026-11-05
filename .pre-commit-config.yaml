@@ -6,6 +6,29 @@ default_install_hook_types: [pre-commit, commit-msg]
 default_stages: [pre-commit]
 
 repos:
+  # File hygiene: block large files (datasets, models) and fix whitespace
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=1024, --enforce-all]
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # Secrets: scan staged changes for API keys, tokens, and private keys.
+  # CI scans every commit in the PR with the same gitleaks version.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
   # Commit messages: Conventional Commits (rules in .commitlintrc.yaml)
   - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
     rev: v9.27.0
