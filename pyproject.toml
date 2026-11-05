@@ -1,0 +1,40 @@
+# Shared tool configuration. ruff reads this automatically: in the pre-commit
+# hooks, in CI, and in editors with the Ruff extension. Change the style here
+# (in a PR) rather than in personal editor settings.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["PyDev"]  # the project virtual environment
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes: unused imports/variables, undefined names
+  "I",    # isort: import order
+  "B",    # flake8-bugbear: likely bugs (mutable default args, etc.)
+  "UP",   # pyupgrade: modern syntax for the target Python version
+  "N",    # pep8-naming
+  "SIM",  # flake8-simplify
+  "C4",   # flake8-comprehensions
+  "NPY",  # NumPy: deprecated APIs, legacy (unseeded) random calls
+  "RUF",  # ruff-specific checks
+]
+ignore = [
+  "E501",  # line length is the formatter's job
+  "N803",  # allow sklearn-style argument names like X, X_train
+  "N806",  # ...and variables like X_train, X_test
+]
+
+[tool.ruff.lint.per-file-ignores]
+"*.ipynb" = ["E402"]  # notebooks often import mid-file
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]  # lets tests import src/, api/ without installing a package
+addopts = "-ra"

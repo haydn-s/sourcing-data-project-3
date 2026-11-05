@@ -1,0 +1,44 @@
+# PyDev: the project's local development environment for data science and
+# deep learning. Python 3.12. Create it with `make venv` (README > Getting Started).
+#
+# Kept separate from requirements.txt on purpose: the API's Docker image and CI
+# install only requirements.txt, so torch and tensorflow (several GB) stay out.
+# Versions are pinned for reproducibility, and Dependabot proposes updates weekly.
+# Mac users: torch 2.12+ needs macOS 14 or newer.
+
+-r requirements-dev.txt     # pre-commit, pytest
+# When requirements.txt exists, add "-r requirements.txt" here and keep shared
+# pins (e.g., scikit-learn) identical so saved models load in both environments.
+
+# Core numerics and data
+numpy==2.5.4
+pandas==3.1.1
+scipy==1.18.1
+pyarrow==26.0.1             # Parquet files
+
+# Statistics and classical ML
+statsmodels==0.15.0
+scikit-learn==1.9.1
+xgboost==3.4.1
+
+# Deep learning
+torch==2.15.0
+torchvision==0.29.2         # datasets, transforms, pretrained vision models
+tensorflow==2.21.0          # includes Keras 3
+
+# Visualization
+matplotlib==3.11.2
+seaborn==0.13.2
+plotly==7.1.0               # interactive charts
+shap==0.54.1                # model explanation plots
+
+# Notebooks
+jupyterlab==4.6.5
+ipykernel==7.4.0
+ipywidgets==8.1.9           # interactive widgets and notebook progress bars
+
+# Experiment tracking and utilities
+wandb==0.31.0
+pyyaml==6.0.3               # config.yaml
+python-dotenv==1.2.4        # load .env
+tqdm==4.70.1

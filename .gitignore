@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+PyDev/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Secrets and credentials: never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*.json
+service-account*.json
+.streamlit/secrets.toml
+
+# Data and model artifacts live in cloud storage, not git
+data/
+models/
+mlruns/
+wandb/
+
+# Node (commitlint tooling in CI)
+node_modules/
+
+# OS
+.DS_Store
