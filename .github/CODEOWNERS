@@ -1,0 +1,4 @@
+# Code owners are automatically requested for review on every PR (except the
+# PR's author). Branch protection requires 1 approval: see
+# .github/rulesets/protect-main.json.
+* @haydn-s @jothigup
