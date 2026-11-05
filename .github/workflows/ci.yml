@@ -14,10 +14,11 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Jobs call the same Makefile targets developers run locally (make pr-ready),
+# so the commitlint version and test behavior live in one place.
 env:
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "24"
-  COMMITLINT_VERSION: "21.2.4"
 
 jobs:
   commitlint:
@@ -33,22 +34,16 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install commitlint
-        run: >-
-          npm install --no-save
-          "@commitlint/cli@${COMMITLINT_VERSION}"
-          "@commitlint/config-conventional@${COMMITLINT_VERSION}"
-
       - name: Lint commit messages in this PR
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: npx commitlint --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
+        run: make lint-commits FROM="$BASE_SHA" TO="$HEAD_SHA"
 
       - name: Lint PR title
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-        run: printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
+        run: make lint-title
 
   secrets:
     name: Secret scan (gitleaks)
@@ -93,7 +88,7 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Run pre-commit hooks on all files
-        run: pre-commit run --all-files --show-diff-on-failure
+        run: make lint
 
   test:
     name: Tests (pytest)
@@ -111,17 +106,8 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run tests
-        # pytest exits with code 5 when it collects no tests. Treat that as a pass
-        # until the first tests land, then this behaves like plain `pytest`.
-        run: |
-          set +e
-          pytest
-          status=$?
-          if [ "$status" -eq 5 ]; then
-            echo "::notice::No tests collected yet."
-            exit 0
-          fi
-          exit "$status"
+        # Passes when no tests exist yet (pytest exit code 5); see Makefile.
+        run: make test
 
   # Add jobs above as the project grows, and list each one under `needs` below.
   # Planned:
