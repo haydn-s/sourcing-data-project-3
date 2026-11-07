@@ -100,16 +100,23 @@ Lock these down at kickoff so Track A and Track B can build at the same time wit
 **API contract.**
 
 ```
-GET  /health   → 200 {"status": "ok", "model_version": "<wandb-run-id>"}
+GET  /health    → 200 {"status": "ok", "model_version": "<wandb-run-id>"}
 
-POST /predict  → body: one JSON object with one key per feature
-               ← 200 {"prediction": <label or number>,
-                      "probability": <float | null>,   # classification only
-                      "model_version": "<wandb-run-id>"}
-               ← 422 on validation errors (FastAPI default)
+GET  /metadata  → 200 {"model_version", "task", "target", "model_type", "metrics",
+                       "features": [{"name", "kind", "min", "max"} | {"name", "kind", "categories"}],
+                       "classes", "example", ...}
+
+POST /predict   → body: one JSON object with one key per feature
+                ← 200 {"prediction": <label or number>,
+                       "probability": <float | null>,   # predicted class; classification only
+                       "model_version": "<wandb-run-id>"}
+                ← 422 on validation errors: missing, extra, or wrongly typed fields,
+                      or a category not seen in training
 ```
 
-**Model artifact.** A single `model.joblib` holding the full sklearn `Pipeline`, stored at `s3://<bucket>/models/<run-id>/model.joblib` with a copy at `s3://<bucket>/models/latest/model.joblib`. A small `metadata.json` sits next to it (feature list, metrics, run ID, timestamp).
+The `/predict` request schema is generated from the model's `metadata.json`, so the API code doesn't change when the feature list does. The Streamlit form can do the same by reading `/metadata`.
+
+**Model artifact.** A single `model.joblib` holding the full sklearn `Pipeline`, stored at `s3://<bucket>/models/<run-id>/model.joblib` with a copy at `s3://<bucket>/models/latest/model.joblib`. A `metadata.json` sits next to it: run ID, timestamp, task, metrics, features (numeric ranges, allowed categories), class labels, an example request, the data file's SHA-256, library versions, and the full config.
 
 ## 6. Milestones & Tasks
 
@@ -137,9 +144,23 @@ POST /predict  → body: one JSON object with one key per feature
 - [ ] Set up the AWS account: billing, a budget alert, and a login for each of us (see decision 10)
 - [ ] Create the S3 bucket (versioning on, public read for `data/processed/` only) and the ECR repository, both in our chosen region
 - [ ] Apply for the W&B academic plan with a duke.edu email, create a team, invite Jothi, and create a **public** project
-- [ ] Scaffold the code layout: folders, `.env.example`, empty `config.yaml`, `requirements.txt`
+- [x] Scaffold the code layout: folders, `.env.example`, `config.yaml`, `requirements.txt` (plus the dataset-agnostic framework; see Phase 1)
 
 ### Phase 1: Parallel build · Target: Sun, Nov 15 (walking skeleton by Thu, Nov 12)
+
+> **Framework status (Nov 7, `pipeline-tooling` branch).** The parts of these tasks that don't depend on the dataset are built and tested on a synthetic demo dataset: config loading and validation, S3 storage, data loading and splitting, preprocessing, the model registry, metrics and plots, W&B logging, the training CLI, the FastAPI app, the Dockerfile and entrypoint, and a Docker smoke test in CI. What's left in each task is dataset-specific:
+>
+> | Task | Remaining |
+> |---|---|
+> | A1 | All of it (EDA) |
+> | A2 | Write `clean()` in `scripts/upload_data.py`, then run it against S3 |
+> | A3, A4 | Set the real feature lists and target in `config.yaml`. Add tests for any dataset-specific preprocessing |
+> | A5–A7 | Pick the metric and baseline, run the experiments, fill in the results table |
+> | B1, B2 | Replace `tests/sample_request.json` with a real record |
+> | B3 | Built. Confirm `make docker-smoke` passes (locally or in CI), then again with the real config |
+> | B4–B6 | All of it (deploy, front-end) |
+>
+> Re-split ownership at kickoff so each of us still has PRs to open.
 
 #### Track A: Data & training pipeline
 
@@ -233,9 +254,9 @@ docs/readme-results
 
 | Phase | Add to CI |
 |---|---|
-| Now | commitlint (commits + PR title), gitleaks secret scan, pre-commit hooks (file checks, ruff), pytest |
-| Track A | Unit tests for config loading and `features.py` (picked up by the existing pytest job) |
-| Track B | API tests with FastAPI `TestClient`. A Docker build check (`docker build`, then smoke-test `/health`) |
+| Now | commitlint (commits + PR title), gitleaks secret scan, pre-commit hooks (file checks, ruff), pytest (config, features, models, storage, training, API), and a Docker smoke test (build, train on demo data, serve read-only, call `/health` and `/predict`) |
+| Track A | Tests for dataset-specific cleaning and preprocessing (picked up by the existing pytest job) |
+| Track B | Front-end tests, if any. The API tests and Docker check already run |
 | Deploy | CD job: on push to `main`, build the image, push it to ECR, and update the Lambda function. Sign in to AWS with a GitHub OIDC role instead of stored AWS keys. Streamlit Community Cloud redeploys from `main` on its own |
 
 **Changing branch protection.** Edit [`.github/rulesets/protect-main.json`](../.github/rulesets/protect-main.json) in a PR. Once it merges, a repo admin applies it:
