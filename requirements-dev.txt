@@ -1,3 +1,4 @@
 # Development and CI tooling (not needed to train or serve the model)
 pre-commit==4.7.0
 pytest==9.2.0
+httpx2==2.16.0              # FastAPI's TestClient (Starlette's replacement for httpx)
