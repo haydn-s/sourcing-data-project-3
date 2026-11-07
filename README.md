@@ -1,14 +1,14 @@
 # &lt;Project Name&gt;
 
-> 🚧 **Status: planning.** We haven't picked the dataset or the problem yet; we'll decide at kickoff. Sections marked **TODO** get filled in as we build. The stack described here is our *proposed default*; see the [Development Plan](docs/DEVELOPMENT_PLAN.md) for the reasoning and the open decisions.
+> 🚧 **Status: planning.** We haven't picked the dataset or the problem yet; we'll decide at kickoff. Sections marked **TODO** get filled in as we build. The stack is chosen: AWS (S3 and Lambda), Weights & Biases, FastAPI, and Streamlit. See the [Development Plan](docs/DEVELOPMENT_PLAN.md) for the reasoning and the open decisions.
 
 **TODO:** One-sentence pitch: what we predict, for whom, and why it's useful.
 
 | | |
 |---|---|
 | 🖥️ **Live app** | TODO: `https://<app-name>.streamlit.app` |
-| 🔌 **Prediction API** | TODO: `https://<api-host>/predict` |
-| 📖 **API docs (Swagger UI)** | TODO: `https://<api-host>/docs` |
+| 🔌 **Prediction API** | TODO: `https://<url-id>.lambda-url.<region>.on.aws/predict` |
+| 📖 **API docs (Swagger UI)** | TODO: `https://<url-id>.lambda-url.<region>.on.aws/docs` |
 | 📈 **Experiment tracking** | TODO: `https://wandb.ai/<entity>/<project>` |
 
 *AIPI 510, Module Project 3 (Data/ML Engineering), Duke University*
@@ -40,7 +40,7 @@
     - [2. Train the model](#2-train-the-model)
     - [3. Run the API locally](#3-run-the-api-locally)
     - [4. Run everything with Docker](#4-run-everything-with-docker)
-    - [5. Deploy the API to the cloud](#5-deploy-the-api-to-the-cloud)
+    - [5. Deploy the API to AWS Lambda](#5-deploy-the-api-to-aws-lambda)
     - [6. Run and deploy the front-end](#6-run-and-deploy-the-front-end)
   - [Configuration](#configuration)
   - [API Reference](#api-reference)
@@ -67,7 +67,7 @@
 - Train a model with a **config-driven, reproducible pipeline** that pulls data from the cloud
 - **Track experiments** (parameters, metrics, plots, model artifacts)
 - **Containerize** training and serving in a single Docker image
-- Serve predictions from a **FastAPI `/predict` endpoint deployed to a public cloud platform** (TODO: provider)
+- Serve predictions from a **FastAPI `/predict` endpoint deployed to AWS Lambda** at a public HTTPS URL
 - Ship a **public front-end** that calls the live API and presents its predictions in a clear, interactive way
 
 **Non-goal.** State-of-the-art accuracy. This project is about engineering and MLOps practice. We keep the model simple on purpose.
@@ -76,12 +76,12 @@
 
 ```mermaid
 flowchart LR
-    SRC[Public dataset<br/>Kaggle / UCI / HF] -->|scripts/upload_data.py<br/>clean + upload| STORED[(Cloud storage · TBD<br/>processed data)]
+    SRC[Public dataset<br/>Kaggle / UCI / HF] -->|scripts/upload_data.py<br/>clean + upload| STORED[(Amazon S3<br/>data/processed/ · public read)]
     STORED -->|src/data.py<br/>download| TRAIN[Training pipeline<br/>src/train.py + config.yaml]
     TRAIN -->|params · metrics · plots| WB[Weights & Biases]
-    TRAIN -->|model.joblib| STOREM[(Cloud storage · TBD<br/>model artifacts)]
-    STOREM -->|loaded at startup| API[FastAPI /predict<br/>Docker on cloud platform · TBD]
-    UI[Streamlit front-end<br/>Streamlit Community Cloud] -->|HTTP POST JSON| API
+    TRAIN -->|model.joblib| STOREM[(Amazon S3<br/>models/ · private)]
+    STOREM -->|loaded at startup<br/>IAM role| API[FastAPI /predict<br/>Docker image on AWS Lambda]
+    UI[Streamlit front-end<br/>Streamlit Community Cloud] -->|HTTP POST JSON<br/>Function URL| API
     USER((User)) --> UI
 ```
 
@@ -94,7 +94,7 @@ flowchart LR
 | **License** | TODO (confirm it allows reuse and redistribution) |
 | **Size** | TODO rows × TODO columns |
 | **Target variable** | TODO |
-| **Cloud location** | TODO: `<cloud-storage-uri>/data/processed/<file>` |
+| **Cloud location** | TODO: `s3://<bucket>/data/processed/<file>` (publicly readable) |
 
 **Features used.**
 
@@ -134,8 +134,9 @@ TODO: one paragraph on what worked, what didn't, and where the model fails (see 
 
 | Service | Purpose |
 |---|---|
-| **TODO: cloud storage** | Hosts the cleaned dataset and trained model artifacts |
-| **TODO: API hosting** | Runs the containerized FastAPI service at a public HTTPS URL |
+| **Amazon S3** | Hosts the cleaned dataset (publicly readable) and the trained model artifacts (private). Versioning is on |
+| **Amazon ECR** | Stores the Docker image that Lambda runs |
+| **AWS Lambda** | Runs the containerized FastAPI service at a public HTTPS Function URL, through the [AWS Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter). Scales to zero when idle. Reads the model from S3 through its IAM role, so it stores no AWS keys |
 | **Weights & Biases** | Experiment tracking: parameters, metrics, plots, versioned model artifacts |
 | **Streamlit Community Cloud** | Hosts the public front-end, deployed straight from this repo |
 | **GitHub Actions** | CI checks on every pull request (see [CI checks](#ci-checks)) |
@@ -255,8 +256,8 @@ That turns the table above into measured numbers. It's listed as a stretch task 
 - `make` (preinstalled on macOS and Linux. On Windows, use WSL or Git Bash)
 - [Node.js](https://nodejs.org/) 22.12+ (`make pr-ready` uses it to run commitlint)
 - [Docker](https://docs.docker.com/get-docker/)
-- TODO: access to our cloud provider (and its CLI, if needed)
-- A [Weights & Biases](https://wandb.ai/) account
+- The [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) and a login to our AWS account (ask the account owner). Not needed just to train: the processed data is publicly readable
+- A [Weights & Biases](https://wandb.ai/) account (W&B is now part of CoreWeave Forge). Students can apply for the free academic plan with a university email. Not needed just to train: set `WANDB_MODE=disabled`
 
 ### Install
 
@@ -319,7 +320,23 @@ Keeping torch and TensorFlow out of `requirements.txt` keeps the API's Docker im
 wandb login
 ```
 
-TODO: add the login step for our cloud provider so local code can read and write cloud storage.
+Set up an AWS CLI profile so local code can read and write S3. Use the first command if the account uses IAM Identity Center, or the second if you have an IAM user's access keys:
+
+```bash
+aws configure sso --profile project3
+```
+
+```bash
+aws configure --profile project3
+```
+
+Check which account and role you're signed in as:
+
+```bash
+aws sts get-caller-identity --profile project3
+```
+
+Then set `AWS_PROFILE=project3` in `.env`. With Identity Center, run `aws sso login --profile project3` when your session expires.
 
 ### Environment variables
 
@@ -327,10 +344,12 @@ Non-secret settings live in `config.yaml`. Secrets and deployment-specific value
 
 | Variable | Used by | Description |
 |---|---|---|
-| TODO | pipeline, API | Cloud storage location and credentials (depends on provider) |
+| `AWS_PROFILE` | pipeline | AWS CLI profile with access to our S3 bucket (see [Authenticate](#authenticate)). Lambda doesn't need it: it uses its IAM role |
+| `AWS_REGION` | pipeline, API | Region of our bucket, e.g. `us-east-1`. Lambda sets it automatically |
 | `WANDB_API_KEY` | pipeline | W&B API key (or run `wandb login`) |
-| `MODEL_URI` | API | Model location: a cloud storage URI or a local path |
-| `API_URL` | front-end | Base URL of the deployed API |
+| `WANDB_MODE` | pipeline | Optional. `offline` or `disabled` lets you train without a W&B account |
+| `MODEL_URI` | API | Model location: `s3://<bucket>/models/latest/model.joblib` or a local path |
+| `API_URL` | front-end | Base URL of the deployed API (the Lambda Function URL) |
 
 ## Usage
 
@@ -346,7 +365,13 @@ python scripts/upload_data.py --config config.yaml
 python -m src.train --config config.yaml
 ```
 
-This downloads the processed data from cloud storage, splits it, trains, evaluates on the validation and test sets, logs everything to W&B, and saves the model pipeline locally and to cloud storage under `models/`. To run an experiment, edit `config.yaml` (or copy it, e.g. `configs/rf_deep.yaml`) and re-run.
+This downloads the processed data from S3, splits it, trains, evaluates on the validation and test sets, logs everything to W&B, and saves the model pipeline locally and to S3 under `models/`. To run an experiment, edit `config.yaml` (or copy it, e.g. `configs/rf_deep.yaml`) and re-run.
+
+**Without our accounts.** Training still runs without AWS credentials (the processed data is public, and the model is saved locally only) or a W&B account:
+
+```bash
+WANDB_MODE=disabled python -m src.train --config config.yaml
+```
 
 ### 3. Run the API locally
 
@@ -372,33 +397,68 @@ Interactive docs: <http://localhost:8080/docs>
 docker build -t project3 .
 ```
 
-Train inside the container, passing credentials through `.env`:
+The container reads your AWS login from your mounted `~/.aws` folder, and `AWS_PROFILE` in `.env` picks the profile. If the image ends up running as a non-root user, change `/root/.aws` to that user's home.
+
+Train inside the container:
 
 ```bash
-docker run --rm --env-file .env project3 train
+docker run --rm --env-file .env -v "$HOME/.aws:/root/.aws" project3 train
 ```
 
 Serve the API (the default command) on port 8080:
 
 ```bash
-docker run --rm -p 8080:8080 --env-file .env project3 serve
+docker run --rm -p 8080:8080 --env-file .env -v "$HOME/.aws:/root/.aws" project3 serve
 ```
 
-TODO: document how the container gets cloud storage credentials once the provider is chosen.
+### 5. Deploy the API to AWS Lambda
 
-### 5. Deploy the API to the cloud
+> Planned steps. We'll confirm the exact commands during task B4.
 
-TODO: fill in once we choose the platform. The steps will be:
-
-1. Build the image for `linux/amd64`. Most cloud platforms run `amd64`, so on an Apple Silicon Mac use `docker buildx build --platform linux/amd64 ...`.
-2. Push the image to the provider's container registry.
-3. Deploy it as a public HTTPS service, with `MODEL_URI` pointing at the trained model in cloud storage.
-4. Give the service read access to the model in cloud storage.
-
-Confirm the deployed endpoint works:
+Set a few shell variables first, replacing the region if needed:
 
 ```bash
-curl -X POST https://<api-host>/predict \
+export AWS_PROFILE=project3 AWS_REGION=us-east-1 FUNCTION=project3-api REPO=project3-api
+export REGISTRY="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com"
+export IMAGE="$REGISTRY/$REPO:latest"
+```
+
+**1. Build the image.** Lambda accepts only a single-platform image without buildx's default attestations, so build it this way on every machine, Apple Silicon included:
+
+```bash
+docker buildx build --platform linux/amd64 --provenance=false --sbom=false -t "$IMAGE" --load .
+```
+
+**2. Push it to ECR.** Create the repository the first time only:
+
+```bash
+aws ecr create-repository --repository-name "$REPO"
+```
+
+Then sign Docker in to ECR and push:
+
+```bash
+aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
+docker push "$IMAGE"
+```
+
+**3. Create the function (first time only).** In the Lambda console, choose **Create function → Container image**, pick the image, and set the architecture to **x86_64**. Then, under **Configuration**:
+
+- **General configuration:** memory 2048 MB, timeout 30 seconds
+- **Environment variables:** `MODEL_URI=s3://<bucket>/models/latest/model.joblib`
+- **Permissions:** open the execution role and add a policy that allows `s3:GetObject` on `arn:aws:s3:::<bucket>/models/*`
+- **Function URL:** create one with auth type **NONE**. The console adds both permissions a public URL needs (`lambda:InvokeFunctionUrl` and `lambda:InvokeFunction`)
+
+**4. Deploy later changes.** Rebuild and push (steps 1 and 2), then point the function at the new image:
+
+```bash
+aws lambda update-function-code --function-name "$FUNCTION" --image-uri "$IMAGE"
+```
+
+Confirm the deployed endpoint works. The first request after the function sits idle takes a few extra seconds (a cold start):
+
+```bash
+curl -X POST https://<url-id>.lambda-url.<region>.on.aws/predict \
   -H "Content-Type: application/json" \
   -d @tests/sample_request.json
 ```
@@ -415,7 +475,7 @@ API_URL=http://localhost:8080 streamlit run frontend/app.py
 Deploy on [Streamlit Community Cloud](https://share.streamlit.io/): **New app** → this repo → branch `main` → main file `frontend/app.py`. Then under **Advanced settings → Secrets**, add:
 
 ```toml
-API_URL = "https://<api-host>"
+API_URL = "https://<url-id>.lambda-url.<region>.on.aws"
 ```
 
 ## Configuration
@@ -425,7 +485,7 @@ Every pipeline parameter lives in [`config.yaml`](config.yaml). Proposed shape:
 ```yaml
 seed: 42
 data:
-  remote_uri: <cloud-storage-uri>/data/processed/<file>.csv   # provider TBD
+  remote_uri: s3://<bucket>/data/processed/<file>.csv
   local_path: data/processed/<file>.csv
   target: <target_column>
 features:
@@ -445,7 +505,7 @@ tracking:
   entity: <wandb-entity>
 output:
   local_dir: models/
-  remote_prefix: <cloud-storage-uri>/models/
+  remote_prefix: s3://<bucket>/models/
 ```
 
 ## API Reference
@@ -556,7 +616,7 @@ Passing locally means CI should pass too. The one check CI adds is a gitleaks sc
 | **Tests (pytest)** | `make test` (passes with a notice until the first tests exist) |
 | **CI passed** | Gate job that succeeds only if every job above passed or was skipped. Branch protection requires this one check |
 
-To add a check, add a job to `ci.yml` and list it under `ci-passed.needs`. Branch protection doesn't need to change. Planned additions: a Docker build check once the `Dockerfile` lands, and deployment on merge once we pick a cloud platform.
+To add a check, add a job to `ci.yml` and list it under `ci-passed.needs`. Branch protection doesn't need to change. Planned additions: a Docker build check once the `Dockerfile` lands, and a deploy job on merge that pushes the image to ECR and updates the Lambda function.
 
 CI calls the same `make` targets you run locally. See [Code style and the pre-PR check](#code-style-and-the-pre-pr-check).
 
