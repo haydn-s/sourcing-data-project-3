@@ -1,0 +1,11 @@
+# Baseline: predicts the most common class (classification) or the mean
+# (regression). Every real model should beat it.
+#   make train CONFIG=configs/baseline.yaml
+extends: ../config.yaml
+
+model:
+  type: dummy
+  params: {}
+
+tracking:
+  tags: [demo, baseline]
