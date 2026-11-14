@@ -34,7 +34,7 @@
     - [Install](#install)
     - [The PyDev environment](#the-pydev-environment)
     - [Authenticate](#authenticate)
-    - [Environment variables](#environment-variables)
+    - [Set up your .env](#set-up-your-env)
   - [Usage](#usage)
     - [0. Try it on the demo data](#0-try-it-on-the-demo-data)
     - [1. Build the dataset and upload it to the cloud](#1-build-the-dataset-and-upload-it-to-the-cloud)
@@ -277,7 +277,7 @@ cd sourcing-data-project-3
 make venv              # creates PyDev (Python 3.12) and installs requirements-pydev.txt
 source PyDev/bin/activate
 make setup             # installs the git hooks: commitlint, gitleaks, ruff, file checks
-cp .env.example .env   # then fill in values
+cp .env.example .env   # then fill in what you need (Set up your .env)
 ```
 
 `make venv` uses uv if it's installed, and falls back to `python3.12 -m venv`. Without `make`:
@@ -361,16 +361,60 @@ aws sts get-caller-identity --profile project3
 
 The deploy commands in [Usage 5](#5-deploy-the-api-to-aws-lambda) use this profile. With Identity Center, run `aws sso login --profile project3` when your session expires.
 
-### Environment variables
+### Set up your `.env`
 
-Non-secret settings live in `config.yaml`. Secrets and deployment-specific values go in environment variables (`.env` locally, never committed).
+Settings that aren't secret live in `config.yaml`. Secrets and per-machine values go in `.env`, which git ignores. Start from the template:
+
+```bash
+cp .env.example .env
+```
+
+What you fill in depends on what you run. Nobody needs every value.
+
+**Data pipeline** (`make ingest`, `make prepare`, `make push`):
+
+1. Keep `GOOGLE_CLOUD_PROJECT=climate-impact-pipeline`.
+2. Sign in to Google Cloud ([Authenticate](#authenticate)) so `make ingest` and `make push` can upload.
+3. Uncomment and fill in a key for each source in `ingest.sources` that needs one ([below](#data-source-keys)). `make ingest` lists any that are missing, or left blank, before it fetches anything.
+
+**ML pipeline and API** (`make train`, `make serve`):
+
+1. Run `wandb login`, or set `WANDB_API_KEY`. To train without a W&B account, set `WANDB_MODE=disabled` instead.
+2. Leave `MODEL_URI` as is to serve your latest local model, or set it to `gs://climate-impact-pipeline-data/models/latest/model.joblib` to serve the published one.
+3. That's all to train: training downloads the processed data from the public bucket, so it needs no data-source keys and no Google login.
+4. To upload models (once `output.remote_prefix` is set in `config.yaml`), sign in to Google Cloud ([Authenticate](#authenticate)). The bucket's owner first grants your Google account write access, once:
+
+    ```bash
+    gcloud storage buckets add-iam-policy-binding gs://climate-impact-pipeline-data --member=user:name@example.com --role=roles/storage.objectAdmin
+    ```
+
+    Replace `name@example.com` with your Google account's email.
+
+**Front-end:** set `API_URL` to the API you're calling.
+
+#### Data source keys
+
+Each is free, and everyone requests their own. In `config.yaml`, a source refers to its key as `${NAME}`:
+
+| Variable | Source | Get one at | In the source's config |
+|---|---|---|---|
+| `NASS_API_KEY` | USDA NASS Quick Stats: bee colonies, crops | [quickstats.nass.usda.gov/api](https://quickstats.nass.usda.gov/api) | `params: {key: "${NASS_API_KEY}"}` |
+| `NOAA_CDO_TOKEN` | NOAA Climate Data Online: weather station records | [ncdc.noaa.gov/cdo-web/token](https://www.ncdc.noaa.gov/cdo-web/token) | `headers: {token: "${NOAA_CDO_TOKEN}"}` |
+| `EIA_API_KEY` | EIA Open Data: power plants, electricity | [eia.gov/opendata/register.php](https://www.eia.gov/opendata/register.php) | `params: {api_key: "${EIA_API_KEY}"}` |
+| `EARTHDATA_TOKEN` | NASA Earthdata: GRACE ice mass (PO.DAAC) | **Generate Token** on your profile at [urs.earthdata.nasa.gov](https://urs.earthdata.nasa.gov) | `headers: {Authorization: "Bearer ${EARTHDATA_TOKEN}"}`. Tokens expire, and some NASA hosts don't take them, so check the dataset's access page |
+
+These sources need no key: Open-Meteo (sunshine and weather), NASA POWER (solar irradiance), NOAA Climate at a Glance (state climate), the USGS earthquake catalog, the NSIDC Sea Ice Index, BTS flight data, and the GEM active faults database.
+
+If a key ever lands in a response, ingest replaces it with `***` before saving the snapshot, since snapshots are uploaded to the public bucket. Error messages hide keys too.
+
+#### All variables
 
 | Variable | Used by | Description |
 |---|---|---|
 | `GOOGLE_CLOUD_PROJECT` | data pipeline | Our Google Cloud project, `climate-impact-pipeline` |
-| API keys, e.g. `NASS_API_KEY` | data pipeline | Keys for data sources. `config.yaml` refers to them as `${NAME}`, so they never go in git |
-| `WANDB_API_KEY` | pipeline | W&B API key (or run `wandb login`) |
-| `WANDB_MODE` | pipeline | Optional. `offline` or `disabled` lets you train without a W&B account |
+| `NASS_API_KEY`, `NOAA_CDO_TOKEN`, `EIA_API_KEY`, `EARTHDATA_TOKEN` | data pipeline | Data source keys ([above](#data-source-keys)) |
+| `WANDB_API_KEY` | ML pipeline | W&B API key (or run `wandb login`) |
+| `WANDB_MODE` | ML pipeline | Optional. `offline` or `disabled` lets you train without a W&B account |
 | `MODEL_URI` | API | Model location: `gs://climate-impact-pipeline-data/models/latest/model.joblib` or a local path (default: `models/latest/model.joblib`) |
 | `MODEL_CACHE_DIR` | API | Optional. Where a Cloud Storage model is downloaded (default: a folder in `/tmp`, the only writable path on Lambda) |
 | `API_URL` | front-end | Base URL of the deployed API (the Lambda Function URL) |
