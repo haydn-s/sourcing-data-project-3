@@ -13,13 +13,18 @@ FROM python:3.12.15-slim
 
 COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 /lambda-adapter /opt/extensions/lambda-adapter
 
-# Lambda's filesystem is read-only except /tmp, so nothing may write elsewhere at
-# runtime: no .pyc files, and matplotlib's cache goes to /tmp.
+# Lambda's filesystem is read-only except /tmp, and a container run with
+# --user has no writable home directory, so nothing may write elsewhere at
+# runtime: no .pyc files, and matplotlib's and W&B's files go to /tmp.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     MPLCONFIGDIR=/tmp/matplotlib \
+    WANDB_DIR=/tmp \
+    WANDB_DATA_DIR=/tmp/wandb-data \
+    WANDB_CACHE_DIR=/tmp/wandb-cache \
+    WANDB_CONFIG_DIR=/tmp/wandb-config \
     PORT=8080 \
     AWS_LWA_READINESS_CHECK_PATH=/health
 
