@@ -24,7 +24,7 @@ trap cleanup EXIT
 mkdir -p "$WORK/data" "$WORK/models"
 
 echo "--> Generating demo data and training in the container"
-docker run --rm --user "$RUN_AS" -v "$WORK/data:/app/data" "$IMAGE" python -m src.demo_data
+docker run --rm --user "$RUN_AS" -v "$WORK/data:/app/data" "$IMAGE" python -m ml_pipeline.demo_data
 docker run --rm --user "$RUN_AS" -e WANDB_MODE=disabled \
   -v "$WORK/data:/app/data" -v "$WORK/models:/app/models" "$IMAGE" train
 

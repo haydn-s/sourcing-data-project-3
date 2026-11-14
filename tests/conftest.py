@@ -9,9 +9,9 @@ from typing import Any
 
 import pytest
 
-from src import storage
-from src.config import PipelineConfig, load_config
-from src.demo_data import make_demo_frame
+from ml_pipeline.demo_data import make_demo_frame
+from shared import storage
+from shared.config import PipelineConfig, load_config
 
 REPO = Path(__file__).resolve().parents[1]
 REPO_CONFIG = REPO / "config.yaml"

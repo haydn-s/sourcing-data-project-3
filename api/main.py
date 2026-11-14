@@ -29,7 +29,7 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
 from api.schemas import HealthResponse, MetadataResponse, PredictResponse, build_request_model
-from src.storage import download, is_gcs_uri, join_uri
+from shared.storage import download, is_gcs_uri, join_uri
 
 log = logging.getLogger(__name__)
 

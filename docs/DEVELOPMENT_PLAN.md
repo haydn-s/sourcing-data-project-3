@@ -154,7 +154,7 @@ The `/predict` request schema is generated from the model's `metadata.json`, so 
 > | Task | Remaining |
 > |---|---|
 > | A1 | All of it (EDA) |
-> | A2 | The three-stage data pipeline is built (`data-pipeline` branch, Nov 14). Add the real sources to `config.yaml`, write their cleaners and feature steps in `src/prepare.py`, then run `make data` |
+> | A2 | The three-stage data pipeline is built (`data-pipeline` branch, Nov 14). Add the real sources to `config.yaml`, write their cleaners and feature steps in `data_pipeline/prepare.py`, then run `make data` |
 > | A3, A4 | Set the real feature lists and target in `config.yaml`. Add tests for any dataset-specific preprocessing |
 > | A5–A7 | Pick the metric and baseline, run the experiments, fill in the results table |
 > | B1, B2 | Replace `tests/sample_request.json` with a real record |
@@ -168,10 +168,10 @@ The `/predict` request schema is generated from the model's `metadata.json`, so 
 | ID | Task | Done when | Owner | PR |
 |---|---|---|---|---|
 | A1 | EDA notebook: understand the data, find cleaning needs, check for target leakage | Short findings written in the notebook | | |
-| A2 | `scripts/ingest_data.py`, `prepare_data.py`, `push_data.py`: fetch raw data from APIs → clean, join, and add features → upload the processed table to Cloud Storage under `processed/` | Processed file is in Cloud Storage. Scripts are re-runnable | | |
-| A3 | `src/config.py` + `src/data.py`: load config, download processed data from Cloud Storage with google-cloud-storage (add it to `requirements.txt`). Read anonymously, since the bucket is public, so graders can run it | `python -c` smoke test loads a DataFrame, with and without Google credentials | | |
-| A4 | `src/features.py`: `ColumnTransformer` (impute, scale, encode) driven by the feature lists in config | Unit test passes on a small sample | | |
-| A5 | `src/train.py` + `src/evaluate.py`: train/val/test split (seeded), train the model from config, compute metrics, save `model.joblib` + `metadata.json` locally and to Cloud Storage (`models/<run-id>/` and `models/latest/`). Skip the upload, with a warning, when no Google credentials are set | Baseline and main model both train from config | | |
+| A2 | `data_pipeline/`: `ingest.py`, `prepare.py`, `push.py`: fetch raw data from APIs → clean, join, and add features → upload the processed table to Cloud Storage under `processed/` | Processed file is in Cloud Storage. Scripts are re-runnable | | |
+| A3 | `shared/config.py` + `ml_pipeline/data.py`: load config, download processed data from Cloud Storage with google-cloud-storage (add it to `requirements.txt`). Read anonymously, since the bucket is public, so graders can run it | `python -c` smoke test loads a DataFrame, with and without Google credentials | | |
+| A4 | `ml_pipeline/features.py`: `ColumnTransformer` (impute, scale, encode) driven by the feature lists in config | Unit test passes on a small sample | | |
+| A5 | `ml_pipeline/train.py` + `ml_pipeline/evaluate.py`: train/val/test split (seeded), train the model from config, compute metrics, save `model.joblib` + `metadata.json` locally and to Cloud Storage (`models/<run-id>/` and `models/latest/`). Skip the upload, with a warning, when no Google credentials are set | Baseline and main model both train from config | | |
 | A6 | W&B integration: log config, metrics, confusion matrix / residual plot, feature importance, and the model as a W&B artifact (upload the file, or add a `gs://` reference). Honor `WANDB_MODE=offline` / `disabled` so anyone can train without a W&B account | Runs appear on the dashboard with plots and the artifact. Training also runs with `WANDB_MODE=disabled` | | |
 | A7 | Run 3–5 experiments (different models or hyperparameters) and pick the final model | Results table in the README links to the runs | | |
 
@@ -290,7 +290,7 @@ Maps each assignment requirement to where we satisfy it. Tick these off before s
 
 **Repository**
 
-- [ ] Code for preprocessing, training, serving, and deployment → `scripts/`, `src/`, `api/`, `Dockerfile`
+- [ ] Code for preprocessing, training, serving, and deployment → `data_pipeline/`, `ml_pipeline/`, `shared/`, `api/`, `Dockerfile`
 - [ ] `config.yaml` controls pipeline parameters
 - [ ] `requirements.txt`
 - [ ] `Dockerfile` that runs the full project, with `train` and `serve` entry points

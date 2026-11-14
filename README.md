@@ -77,8 +77,8 @@
 
 ```mermaid
 flowchart LR
-    SRC[Public data sources<br/>web APIs · files] -->|ingest → prepare → push<br/>scripts/*_data.py| STORED[(Google Cloud Storage<br/>raw/ · processed/ · public read)]
-    STORED -->|src/data.py<br/>download| TRAIN[Training pipeline<br/>src/train.py + config.yaml]
+    SRC[Public data sources<br/>web APIs · files] -->|data_pipeline/<br/>ingest → prepare → push| STORED[(Google Cloud Storage<br/>raw/ · processed/ · public read)]
+    STORED -->|ml_pipeline/data.py<br/>download| TRAIN[ML pipeline<br/>ml_pipeline/train.py + config.yaml]
     TRAIN -->|params · metrics · plots| WB[Weights & Biases]
     TRAIN -->|model.joblib| STOREM[(Google Cloud Storage<br/>models/ · public read)]
     STOREM -->|loaded at startup<br/>anonymous read| API[FastAPI /predict<br/>Docker image on AWS Lambda]
@@ -103,7 +103,7 @@ flowchart LR
 |---|---|---|
 | TODO | numeric / categorical | TODO |
 
-**Cleaning & preprocessing.** TODO: missing-value handling, dropped columns and why, type fixes, outlier handling, leakage checks. Raw-to-processed cleaning, joining, and feature engineering happen in [`src/prepare.py`](src/prepare.py) ([Usage 1](#1-build-the-dataset-and-upload-it-to-the-cloud)). Model-time transforms (scaling, encoding) live in the training pipeline so the API can reuse them.
+**Cleaning & preprocessing.** TODO: missing-value handling, dropped columns and why, type fixes, outlier handling, leakage checks. Raw-to-processed cleaning, joining, and feature engineering happen in [`data_pipeline/prepare.py`](data_pipeline/prepare.py) ([Usage 1](#1-build-the-dataset-and-upload-it-to-the-cloud)). Model-time transforms (scaling, encoding) live in the training pipeline so the API can reuse them.
 
 ## Problem Definition & Evaluation
 
@@ -206,13 +206,13 @@ That turns the table above into measured numbers. It's listed as a stretch task 
 
 ```
 .
-├── config.yaml              # All pipeline parameters: data, features, split, model, metric, tracking
+├── config.yaml              # All parameters, in three parts: shared, data pipeline, ML pipeline
 ├── configs/                 # Experiment variants that extend config.yaml (baseline, linear, ...)
 ├── requirements.txt         # Pipeline + API runtime dependencies (pinned; used by Docker, CI, PyDev)
 ├── requirements-dev.txt     # Dev tooling: pre-commit, pytest, httpx2
 ├── requirements-pydev.txt   # PyDev environment: adds notebooks and deep learning (local only)
 ├── pyproject.toml           # Shared code style (ruff) and pytest settings
-├── Makefile                 # Dev commands: make venv, setup, train, serve, docker-smoke, pr-ready
+├── Makefile                 # Dev commands, grouped by pipeline (run `make help`)
 ├── Dockerfile               # One image with `train` and `serve` entry points. Also runs on Lambda
 ├── entrypoint.sh            # Dispatches `train` | `serve` | any other command
 ├── .dockerignore            # Keeps data, models, secrets, and PyDev out of the image
@@ -225,17 +225,17 @@ That turns the table above into measured numbers. It's listed as a stretch task 
 │   ├── CODEOWNERS           # Auto-requests partner review on every PR
 │   ├── dependabot.yml       # Weekly dependency update PRs
 │   └── pull_request_template.md
-├── scripts/
-│   ├── ingest_data.py       # Data 1/3: fetch each source → raw snapshots
-│   ├── prepare_data.py      # Data 2/3: clean, join, add features → processed table
-│   ├── push_data.py         # Data 3/3: upload the processed table to the cloud
-│   └── docker_smoke_test.sh # Trains and serves inside the image (make docker-smoke, CI)
-├── src/
+├── shared/                  # Used by both pipelines and the API
 │   ├── config.py            # Load + validate config files (extends:, --set overrides)
 │   ├── storage.py           # Copy files to and from Cloud Storage (anonymous reads of public files)
-│   ├── ingest.py            # Source types (file, http, custom) and raw snapshots
-│   ├── prepare.py           # Cleaners, joins, and feature steps
-│   ├── data.py              # Load the processed data, train/validation/test split
+│   ├── tables.py            # Read/write CSV and Parquet; check a table has the config's columns
+│   └── cli.py               # --config/--set options, .env loading, and logging for every command
+├── data_pipeline/           # Data pipeline: sources → processed table in Cloud Storage
+│   ├── ingest.py            # 1/3: fetch each source (file, http, custom types) → raw snapshots
+│   ├── prepare.py           # 2/3: cleaners, joins, and feature steps → processed table
+│   └── push.py              # 3/3: upload the processed table (the hand-off to the ML pipeline)
+├── ml_pipeline/             # ML pipeline: processed table → trained model
+│   ├── data.py              # Download the processed table, train/validation/test split
 │   ├── features.py          # Preprocessing (sklearn ColumnTransformer)
 │   ├── models.py            # model.type → scikit-learn estimator
 │   ├── evaluate.py          # Metrics + plots
@@ -248,14 +248,18 @@ That turns the table above into measured numbers. It's listed as a stretch task 
 ├── frontend/                # Planned (task B5)
 │   ├── app.py               # Streamlit UI that calls the deployed API
 │   └── requirements.txt     # Front-end-only dependencies (used by Streamlit Cloud)
-├── tests/
-│   ├── test_*.py            # config, data, ingest, prepare, push, features, models, storage, train, API
+├── scripts/
+│   └── docker_smoke_test.sh # Trains and serves inside the image (make docker-smoke, CI)
+├── tests/                   # Mirrors the packages: shared/, data_pipeline/, ml_pipeline/, api/
+│   ├── test_layout.py       # Each package imports only what it may (the pipelines never import each other)
 │   └── sample_request.json  # Example payload for curl / Postman
 ├── notebooks/               # Planned (task A1)
 │   └── eda.ipynb            # Exploration only; the pipeline never depends on notebooks
 └── docs/
     └── DEVELOPMENT_PLAN.md
 ```
+
+**Two pipelines, one hand-off.** `data_pipeline/` and `ml_pipeline/` are separate packages that never import each other (`tests/test_layout.py` enforces it). The data pipeline's only output is the processed table at `data.remote_uri`, and that table is the ML pipeline's only input. Both use `shared/` and read the same `config.yaml`, whose shared section (`data` and `features`) is the contract between them: `make push` refuses a table that doesn't match it.
 
 ## Getting Started
 
@@ -461,11 +465,11 @@ make prepare
 make push
 ```
 
-1. **Ingest** ([`scripts/ingest_data.py`](scripts/ingest_data.py)) fetches every source in `ingest.sources` and saves its rows unchanged to `data/raw/<name>.csv`, with a `manifest.json` recording when and where each came from. Sources are files (local, URL, or `gs://`) or web APIs (`type: http`, JSON or CSV). APIs that need paging get a custom type in [`src/ingest.py`](src/ingest.py). With `ingest.remote_prefix` set, the snapshots are uploaded too. Add `--source NAME` to refetch just one.
-2. **Prepare** ([`scripts/prepare_data.py`](scripts/prepare_data.py)) cleans each snapshot, joins the sources on their `join_on` columns, runs the feature steps in `prepare.feature_steps`, and writes `data.local_path`. Every source gets a standard clean (snake_case columns, trimmed text, no empty or duplicate rows). Its own cleaner, and the feature steps, are functions in [`src/prepare.py`](src/prepare.py). The joins check for the usual mistakes: missing keys, mismatched key types, and keys that would duplicate rows.
-3. **Push** ([`scripts/push_data.py`](scripts/push_data.py)) uploads the processed table to `data.remote_uri`. It refuses a table that lacks the config's features or target, since training on it would fail.
+1. **Ingest** ([`data_pipeline/ingest.py`](data_pipeline/ingest.py)) fetches every source in `ingest.sources` and saves its rows unchanged to `data/raw/<name>.csv`, with a `manifest.json` recording when and where each came from. Sources are files (local, URL, or `gs://`) or web APIs (`type: http`, JSON or CSV). APIs that need paging get a custom type registered in the same file. With `ingest.remote_prefix` set, the snapshots are uploaded too. Add `--source NAME` to refetch just one.
+2. **Prepare** ([`data_pipeline/prepare.py`](data_pipeline/prepare.py)) cleans each snapshot, joins the sources on their `join_on` columns, runs the feature steps in `prepare.feature_steps`, and writes `data.local_path`. Every source gets a standard clean (snake_case columns, trimmed text, no empty or duplicate rows). Its own cleaner, and the feature steps, are functions registered in the same file. The joins check for the usual mistakes: missing keys, mismatched key types, and keys that would duplicate rows.
+3. **Push** ([`data_pipeline/push.py`](data_pipeline/push.py)) uploads the processed table to `data.remote_uri`. It refuses a table that lacks the config's features or target, since training on it would fail.
 
-Training then downloads `data.remote_uri` with [`src/data.py`](src/data.py). Because the bucket is publicly readable, that needs no Google login. The file is also at `https://storage.googleapis.com/climate-impact-pipeline-data/processed/<file>`.
+The ML pipeline then downloads `data.remote_uri` with [`ml_pipeline/data.py`](ml_pipeline/data.py). Because the bucket is publicly readable, that needs no Google login. The file is also at `https://storage.googleapis.com/climate-impact-pipeline-data/processed/<file>`.
 
 ### 2. Train the model
 
@@ -473,7 +477,7 @@ Training then downloads `data.remote_uri` with [`src/data.py`](src/data.py). Bec
 make train
 ```
 
-That runs `python -m src.train --config config.yaml`. It downloads the processed data from cloud storage (when `data.remote_uri` is set), splits it, trains, evaluates on the validation and test sets, logs everything to W&B, and saves the model pipeline locally and, when `output.remote_prefix` is set, to `gs://climate-impact-pipeline-data/models/`.
+That runs `python -m ml_pipeline.train --config config.yaml`. It downloads the processed data from cloud storage (when `data.remote_uri` is set), splits it, trains, evaluates on the validation and test sets, logs everything to W&B, and saves the model pipeline locally and, when `output.remote_prefix` is set, to `gs://climate-impact-pipeline-data/models/`.
 
 Each run writes `models/<run-id>/` and copies it to `models/latest/`:
 
@@ -490,7 +494,7 @@ make train CONFIG=configs/baseline.yaml
 ```
 
 ```bash
-python -m src.train --config config.yaml --set model.params.max_depth=5 --set split.test_size=0.2
+python -m ml_pipeline.train --config config.yaml --set model.params.max_depth=5 --set split.test_size=0.2
 ```
 
 **Without our accounts.** Training still runs without Google Cloud credentials (the processed data is public, and the model is saved locally only) or a W&B account:
@@ -529,7 +533,7 @@ make docker-build
 
 Mounting `data/` and `models/` keeps the data and trained models on your machine. Training reads the public bucket with no login. To upload models from the container, also mount your Google credentials with `-v "$HOME/.config/gcloud:/root/.config/gcloud:ro"`.
 
-Train inside the container (arguments after `train` go to `src.train`):
+Train inside the container (arguments after `train` go to `ml_pipeline.train`):
 
 ```bash
 docker run --rm --env-file .env -v "$PWD/data:/app/data" -v "$PWD/models:/app/models" project3 train
@@ -631,7 +635,7 @@ Every pipeline parameter lives in [`config.yaml`](config.yaml), which documents 
 | `tracking` | W&B `project`, `entity` (team), and `tags` |
 | `output` | Local model folder and the Cloud Storage prefix to upload models to |
 
-**Model types.** Each type works for both tasks, so switching tasks doesn't mean renaming the model. Add more in [`src/models.py`](src/models.py).
+**Model types.** Each type works for both tasks, so switching tasks doesn't mean renaming the model. Add more in [`ml_pipeline/models.py`](ml_pipeline/models.py).
 
 | `model.type` | Classification | Regression |
 |---|---|---|
@@ -645,10 +649,10 @@ Every pipeline parameter lives in [`config.yaml`](config.yaml), which documents 
 
 **Switching to the real dataset:**
 
-1. Add the sources to `ingest.sources`, write their cleaners and any feature steps in [`src/prepare.py`](src/prepare.py), and run `make data` ([Usage 1](#1-build-the-dataset-and-upload-it-to-the-cloud)).
+1. Add the sources to `ingest.sources`, write their cleaners and any feature steps in [`data_pipeline/prepare.py`](data_pipeline/prepare.py), and run `make data` ([Usage 1](#1-build-the-dataset-and-upload-it-to-the-cloud)).
 2. In `config.yaml`, set `task`, the `data` section, `features`, and `evaluation.primary_metric`. Update `tracking.tags`.
 3. Replace [`tests/sample_request.json`](tests/sample_request.json) with a real record. The API tests and the Docker smoke test send it.
-4. Delete `src/demo_data.py` and the `demo-data` make target once nothing uses them.
+4. Delete `ml_pipeline/demo_data.py` and the `demo-data` make target once nothing uses them.
 
 ## API Reference
 

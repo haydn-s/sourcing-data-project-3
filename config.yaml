@@ -1,4 +1,5 @@
-# Pipeline configuration. Every data and training parameter lives here.
+# Pipeline configuration. Every data and training parameter lives here, in
+# three parts: what both pipelines agree on, then each pipeline's own settings.
 #
 # Until we pick a dataset (kickoff decision 1), this trains on a synthetic demo
 # dataset. Create it with `make demo-data`. Swapping in the real dataset means
@@ -6,23 +7,29 @@
 #
 # Experiment variants live in configs/ and inherit from this file (`extends:`).
 # Override single values from the command line:
-#   python -m src.train --config config.yaml --set model.params.max_depth=5
+#   python -m ml_pipeline.train --config config.yaml --set model.params.max_depth=5
 # Relative paths are relative to the repo root (the container's /app).
 
-seed: 42
-task: classification              # classification | regression
+# ── Shared: the hand-off between the pipelines ─────────────────────────────
+# The data pipeline produces this table, and the ML pipeline trains on it.
+# `make push` refuses a table that lacks these features or the target.
 
 data:
-  # The processed table: the data pipeline writes local_path and pushes it to
-  # remote_uri, and training downloads remote_uri to local_path (when it's set).
-  # CSV or Parquet, chosen by file extension.
+  # The data pipeline writes local_path and pushes it to remote_uri. Training
+  # downloads remote_uri to local_path (when it's set). CSV or Parquet, by extension.
   remote_uri: null                # e.g. gs://climate-impact-pipeline-data/processed/<file>.parquet
   local_path: data/demo/demo.csv
   target: churned
 
-# Data pipeline, stage 1 (make ingest): fetch each source and save it unchanged
-# as <raw_dir>/<name>.csv. The demo dataset has no sources: make demo-data
-# writes it directly.
+features:
+  # Columns not listed here (other than the target) are ignored.
+  numeric: [age, monthly_spend, support_calls]
+  categorical: [region, plan]
+
+# ── Data pipeline (data_pipeline/): make ingest → make prepare → make push ──
+
+# Stage 1, ingest: fetch each source and save it unchanged as <raw_dir>/<name>.csv.
+# The demo dataset has no sources: make demo-data writes it directly.
 ingest:
   raw_dir: data/raw
   remote_prefix: gs://climate-impact-pipeline-data/raw  # snapshots are uploaded here too
@@ -42,18 +49,18 @@ ingest:
   #     type: file                  # CSV/Parquet: local path, http(s) URL, or gs://
   #     uri: https://example.org/state-climate.csv
   #     join_on: [state, year]
-  # Other types (paging APIs, several requests) are registered in src/ingest.py.
+  # Other types (paging APIs, several requests) are registered in data_pipeline/ingest.py.
 
-# Data pipeline, stage 2 (make prepare): clean each source (src/prepare.py),
-# join them, then run these feature steps in order. Stage 3 (make push)
-# uploads the result to data.remote_uri.
+# Stage 2, prepare: clean each source (data_pipeline/prepare.py), join them,
+# then run these feature steps in order. Stage 3, push, uploads the result
+# to data.remote_uri.
 prepare:
-  feature_steps: []               # names registered with @feature_step in src/prepare.py
+  feature_steps: []               # names registered with @feature_step in data_pipeline/prepare.py
 
-features:
-  # Columns not listed here (other than the target) are ignored.
-  numeric: [age, monthly_spend, support_calls]
-  categorical: [region, plan]
+# ── ML pipeline (ml_pipeline/): make train ──────────────────────────────────
+
+seed: 42
+task: classification              # classification | regression
 
 split:
   test_size: 0.15
