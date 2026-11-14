@@ -1,6 +1,6 @@
 # &lt;Project Name&gt;
 
-> 🚧 **Status: framework in place, dataset not chosen.** The pipeline, API, and Docker image are built and run end to end on a synthetic demo dataset ([try it](#0-try-it-on-the-demo-data)). Pointing them at the real dataset is a config change. Sections marked **TODO** get filled in once we pick it at kickoff. The stack is chosen: AWS (S3 and Lambda), Weights & Biases, FastAPI, and Streamlit. See the [Development Plan](docs/DEVELOPMENT_PLAN.md) for the reasoning and the open decisions.
+> 🚧 **Status: framework in place, dataset not chosen.** The pipeline, API, and Docker image are built and run end to end on a synthetic demo dataset ([try it](#0-try-it-on-the-demo-data)). Pointing them at the real dataset is a config change. Sections marked **TODO** get filled in once we pick it at kickoff. The stack is chosen: Google Cloud Storage for the data, AWS (S3 and Lambda) for the models and API, Weights & Biases, FastAPI, and Streamlit. See the [Development Plan](docs/DEVELOPMENT_PLAN.md) for the reasoning and the open decisions.
 
 **TODO:** One-sentence pitch: what we predict, for whom, and why it's useful.
 
@@ -37,7 +37,7 @@
     - [Environment variables](#environment-variables)
   - [Usage](#usage)
     - [0. Try it on the demo data](#0-try-it-on-the-demo-data)
-    - [1. Upload the cleaned dataset to the cloud (one-time)](#1-upload-the-cleaned-dataset-to-the-cloud-one-time)
+    - [1. Build the dataset and upload it to the cloud](#1-build-the-dataset-and-upload-it-to-the-cloud)
     - [2. Train the model](#2-train-the-model)
     - [3. Run the API locally](#3-run-the-api-locally)
     - [4. Run everything with Docker](#4-run-everything-with-docker)
@@ -77,7 +77,7 @@
 
 ```mermaid
 flowchart LR
-    SRC[Public dataset<br/>Kaggle / UCI / HF] -->|scripts/upload_data.py<br/>clean + upload| STORED[(Amazon S3<br/>data/processed/ · public read)]
+    SRC[Public data sources<br/>web APIs · files] -->|ingest → prepare → push<br/>scripts/*_data.py| STORED[(Google Cloud Storage<br/>raw/ · processed/ · public read)]
     STORED -->|src/data.py<br/>download| TRAIN[Training pipeline<br/>src/train.py + config.yaml]
     TRAIN -->|params · metrics · plots| WB[Weights & Biases]
     TRAIN -->|model.joblib| STOREM[(Amazon S3<br/>models/ · private)]
@@ -95,7 +95,7 @@ flowchart LR
 | **License** | TODO (confirm it allows reuse and redistribution) |
 | **Size** | TODO rows × TODO columns |
 | **Target variable** | TODO |
-| **Cloud location** | TODO: `s3://<bucket>/data/processed/<file>` (publicly readable) |
+| **Cloud location** | TODO: `gs://<bucket>/processed/<file>` (publicly readable) |
 
 **Features used.**
 
@@ -103,7 +103,7 @@ flowchart LR
 |---|---|---|
 | TODO | numeric / categorical | TODO |
 
-**Cleaning & preprocessing.** TODO: missing-value handling, dropped columns and why, type fixes, outlier handling, leakage checks. Raw-to-processed cleaning happens in `scripts/upload_data.py`. Model-time transforms (scaling, encoding) live in the training pipeline so the API can reuse them.
+**Cleaning & preprocessing.** TODO: missing-value handling, dropped columns and why, type fixes, outlier handling, leakage checks. Raw-to-processed cleaning, joining, and feature engineering happen in [`src/prepare.py`](src/prepare.py) ([Usage 1](#1-build-the-dataset-and-upload-it-to-the-cloud)). Model-time transforms (scaling, encoding) live in the training pipeline so the API can reuse them.
 
 ## Problem Definition & Evaluation
 
@@ -135,7 +135,8 @@ TODO: one paragraph on what worked, what didn't, and where the model fails (see 
 
 | Service | Purpose |
 |---|---|
-| **Amazon S3** | Hosts the cleaned dataset (publicly readable) and the trained model artifacts (private). Versioning is on |
+| **Google Cloud Storage** | Hosts the raw snapshots and the processed dataset (publicly readable), in project `climate-impact-pipeline`. Versioning is on |
+| **Amazon S3** | Hosts the trained model artifacts (private). Versioning is on |
 | **Amazon ECR** | Stores the Docker image that Lambda runs |
 | **AWS Lambda** | Runs the containerized FastAPI service at a public HTTPS Function URL, through the [AWS Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter). Scales to zero when idle. Reads the model from S3 through its IAM role, so it stores no AWS keys |
 | **Weights & Biases** | Experiment tracking: parameters, metrics, plots, versioned model artifacts |
@@ -226,11 +227,15 @@ That turns the table above into measured numbers. It's listed as a stretch task 
 │   ├── dependabot.yml       # Weekly dependency update PRs
 │   └── pull_request_template.md
 ├── scripts/
-│   ├── upload_data.py       # One-time: raw data → clean → upload to S3
+│   ├── ingest_data.py       # Data 1/3: fetch each source → raw snapshots
+│   ├── prepare_data.py      # Data 2/3: clean, join, add features → processed table
+│   ├── push_data.py         # Data 3/3: upload the processed table to the cloud
 │   └── docker_smoke_test.sh # Trains and serves inside the image (make docker-smoke, CI)
 ├── src/
 │   ├── config.py            # Load + validate config files (extends:, --set overrides)
-│   ├── storage.py           # Copy files to and from S3 (anonymous reads without credentials)
+│   ├── storage.py           # Copy files to and from S3 or Cloud Storage (anonymous reads without credentials)
+│   ├── ingest.py            # Source types (file, http, custom) and raw snapshots
+│   ├── prepare.py           # Cleaners, joins, and feature steps
 │   ├── data.py              # Load the processed data, train/validation/test split
 │   ├── features.py          # Preprocessing (sklearn ColumnTransformer)
 │   ├── models.py            # model.type → scikit-learn estimator
@@ -245,7 +250,7 @@ That turns the table above into measured numbers. It's listed as a stretch task 
 │   ├── app.py               # Streamlit UI that calls the deployed API
 │   └── requirements.txt     # Front-end-only dependencies (used by Streamlit Cloud)
 ├── tests/
-│   ├── test_*.py            # config, features, models, storage, train, API, upload_data
+│   ├── test_*.py            # config, data, ingest, prepare, push, features, models, storage, train, API
 │   └── sample_request.json  # Example payload for curl / Postman
 ├── notebooks/               # Planned (task A1)
 │   └── eda.ipynb            # Exploration only; the pipeline never depends on notebooks
@@ -261,7 +266,8 @@ That turns the table above into measured numbers. It's listed as a stretch task 
 - `make` (preinstalled on macOS and Linux. On Windows, use WSL or Git Bash)
 - [Node.js](https://nodejs.org/) 22.12+ (`make pr-ready` uses it to run commitlint)
 - [Docker](https://docs.docker.com/get-docker/)
-- The [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) and a login to our AWS account (ask the account owner). Not needed just to train: the processed data is publicly readable
+- The [Google Cloud CLI](https://cloud.google.com/sdk/docs/install) and access to project `climate-impact-pipeline`, to upload data. Not needed just to train: the processed data is publicly readable
+- The [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) and a login to our AWS account (ask the account owner), for the models and deployment
 - A [Weights & Biases](https://wandb.ai/) account (W&B is now part of CoreWeave Forge). Students can apply for the free academic plan with a university email. Not needed just to train: set `WANDB_MODE=disabled`
 
 ### Install
@@ -344,6 +350,18 @@ aws sts get-caller-identity --profile project3
 
 Then set `AWS_PROFILE=project3` in `.env`. With Identity Center, run `aws sso login --profile project3` when your session expires.
 
+Sign in to Google Cloud so the data pipeline can upload to Cloud Storage. The second command saves Application Default Credentials, which the Python client uses:
+
+```bash
+gcloud config set project climate-impact-pipeline
+```
+
+```bash
+gcloud auth application-default login
+```
+
+Reading the public processed data needs neither login.
+
 ### Environment variables
 
 Non-secret settings live in `config.yaml`. Secrets and deployment-specific values go in environment variables (`.env` locally, never committed).
@@ -352,6 +370,8 @@ Non-secret settings live in `config.yaml`. Secrets and deployment-specific value
 |---|---|---|
 | `AWS_PROFILE` | pipeline | AWS CLI profile with access to our S3 bucket (see [Authenticate](#authenticate)). Lambda doesn't need it: it uses its IAM role |
 | `AWS_REGION` | pipeline, API | Region of our bucket, e.g. `us-east-1`. Lambda sets it automatically |
+| `GOOGLE_CLOUD_PROJECT` | data pipeline | Our Google Cloud project, `climate-impact-pipeline` |
+| API keys, e.g. `NASS_API_KEY` | data pipeline | Keys for data sources. `config.yaml` refers to them as `${NAME}`, so they never go in git |
 | `WANDB_API_KEY` | pipeline | W&B API key (or run `wandb login`) |
 | `WANDB_MODE` | pipeline | Optional. `offline` or `disabled` lets you train without a W&B account |
 | `MODEL_URI` | API | Model location: `s3://<bucket>/models/latest/model.joblib` or a local path (default: `models/latest/model.joblib`) |
@@ -384,13 +404,27 @@ Then open <http://localhost:8080/docs>, or send the sample request from another 
 curl -X POST http://localhost:8080/predict -H "Content-Type: application/json" -d @tests/sample_request.json
 ```
 
-### 1. Upload the cleaned dataset to the cloud (one-time)
+### 1. Build the dataset and upload it to the cloud
+
+The data pipeline has three stages, each its own script. Run them all with `make data`, or one at a time:
 
 ```bash
-python -m scripts.upload_data --config config.yaml --raw <path-or-url-of-raw-data>
+make ingest
 ```
 
-This reads the raw data (local path, URL, or `s3://`), cleans it with `clean()` in [`scripts/upload_data.py`](scripts/upload_data.py) (a placeholder until we pick the dataset), writes it to `data.local_path`, and uploads it to `data.remote_uri`.
+```bash
+make prepare
+```
+
+```bash
+make push
+```
+
+1. **Ingest** ([`scripts/ingest_data.py`](scripts/ingest_data.py)) fetches every source in `ingest.sources` and saves its rows unchanged to `data/raw/<name>.csv`, with a `manifest.json` recording when and where each came from. Sources are files (local, URL, `gs://`, `s3://`) or web APIs (`type: http`, JSON or CSV). APIs that need paging get a custom type in [`src/ingest.py`](src/ingest.py). With `ingest.remote_prefix` set, the snapshots are uploaded too. Add `--source NAME` to refetch just one.
+2. **Prepare** ([`scripts/prepare_data.py`](scripts/prepare_data.py)) cleans each snapshot, joins the sources on their `join_on` columns, runs the feature steps in `prepare.feature_steps`, and writes `data.local_path`. Every source gets a standard clean (snake_case columns, trimmed text, no empty or duplicate rows). Its own cleaner, and the feature steps, are functions in [`src/prepare.py`](src/prepare.py). The joins check for the usual mistakes: missing keys, mismatched key types, and keys that would duplicate rows.
+3. **Push** ([`scripts/push_data.py`](scripts/push_data.py)) uploads the processed table to `data.remote_uri`. It refuses a table that lacks the config's features or target, since training on it would fail.
+
+Training then downloads `data.remote_uri` with [`src/data.py`](src/data.py). Because the bucket is publicly readable, that needs no Google login. The file is also at `https://storage.googleapis.com/<bucket>/processed/<file>`.
 
 ### 2. Train the model
 
@@ -398,7 +432,7 @@ This reads the raw data (local path, URL, or `s3://`), cleans it with `clean()` 
 make train
 ```
 
-That runs `python -m src.train --config config.yaml`. It downloads the processed data from S3 (when `data.remote_uri` is set), splits it, trains, evaluates on the validation and test sets, logs everything to W&B, and saves the model pipeline locally and to S3 under `models/`.
+That runs `python -m src.train --config config.yaml`. It downloads the processed data from cloud storage (when `data.remote_uri` is set), splits it, trains, evaluates on the validation and test sets, logs everything to W&B, and saves the model pipeline locally and to S3 under `models/`.
 
 Each run writes `models/<run-id>/` and copies it to `models/latest/`:
 
@@ -547,13 +581,15 @@ Every pipeline parameter lives in [`config.yaml`](config.yaml), which documents 
 |---|---|
 | `seed` | Random seed for the split and the model |
 | `task` | `classification` or `regression` |
-| `data` | Where the processed data lives (`remote_uri` in S3, cached at `local_path`) and the `target` column |
+| `data` | Where the processed data lives (`remote_uri` in Cloud Storage or S3, cached at `local_path`) and the `target` column |
+| `ingest` | The data `sources` (type, location, parameters, join keys), the raw snapshot folder, and where to upload snapshots |
+| `prepare` | The feature steps to run after cleaning and joining |
 | `features` | The `numeric` and `categorical` columns to use. Other columns are ignored |
-| `split` | Test and validation fractions (of the whole dataset), and stratification for classification |
+| `split` | Test and validation fractions (of the whole dataset), stratification for classification, and `time_column` to split by time instead (the latest rows become the test set) |
 | `model` | `type` (below) and `params`, passed straight to the scikit-learn estimator |
 | `evaluation` | `primary_metric`: `accuracy`, `f1` (macro), or `roc_auc` for classification; `rmse`, `mae`, or `r2` for regression |
 | `tracking` | W&B `project`, `entity` (team), and `tags` |
-| `output` | Local model folder and the S3 prefix to upload models to |
+| `output` | Local model folder and the cloud prefix (S3 or Cloud Storage) to upload models to |
 
 **Model types.** Each type works for both tasks, so switching tasks doesn't mean renaming the model. Add more in [`src/models.py`](src/models.py).
 
@@ -569,7 +605,7 @@ Every pipeline parameter lives in [`config.yaml`](config.yaml), which documents 
 
 **Switching to the real dataset:**
 
-1. Write `clean()` in [`scripts/upload_data.py`](scripts/upload_data.py) and run it ([Usage 1](#1-upload-the-cleaned-dataset-to-the-cloud-one-time)).
+1. Add the sources to `ingest.sources`, write their cleaners and any feature steps in [`src/prepare.py`](src/prepare.py), and run `make data` ([Usage 1](#1-build-the-dataset-and-upload-it-to-the-cloud)).
 2. In `config.yaml`, set `task`, the `data` section, `features`, and `evaluation.primary_metric`. Update `tracking.tags`.
 3. Replace [`tests/sample_request.json`](tests/sample_request.json) with a real record. The API tests and the Docker smoke test send it.
 4. Delete `src/demo_data.py` and the `demo-data` make target once nothing uses them.
@@ -673,6 +709,7 @@ Passing locally means CI should pass too. The one check CI adds is a gitleaks sc
 | `make lint` | Run every pre-commit hook on all files |
 | `make test` | Run the tests |
 | `make demo-data` | Generate the synthetic demo dataset |
+| `make data` | Run the data pipeline: `make ingest`, `make prepare`, `make push` |
 | `make train CONFIG=...` | Train a model (default: `config.yaml`) |
 | `make serve` | Run the API locally with auto-reload |
 | `make docker-build` | Build the image for Lambda (`linux/amd64`) |

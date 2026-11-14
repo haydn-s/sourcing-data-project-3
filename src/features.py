@@ -2,7 +2,7 @@
 
 These transforms are part of the saved model pipeline, so the API applies
 exactly what training did. Dataset-specific cleaning (dropping columns, fixing
-types) happens earlier, in scripts/upload_data.py.
+types) happens earlier, in src/prepare.py (scripts/prepare_data.py).
 """
 
 from __future__ import annotations

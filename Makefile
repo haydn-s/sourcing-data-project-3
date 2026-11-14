@@ -15,7 +15,7 @@ PLATFORM ?= linux/amd64
 
 .DEFAULT_GOAL := help
 .PHONY: help venv setup format lint test lint-commits lint-title pr-ready \
-	demo-data train serve docker-build docker-smoke
+	demo-data ingest prepare push data train serve docker-build docker-smoke
 
 help: ## List available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -50,6 +50,17 @@ test: ## Run the tests (passes with a notice until tests exist)
 
 demo-data: ## Generate the synthetic demo dataset (data/demo/demo.csv)
 	python -m src.demo_data
+
+ingest: ## Data 1/3: fetch every source in the config and save raw snapshots
+	python -m scripts.ingest_data --config $(CONFIG)
+
+prepare: ## Data 2/3: clean, join, and add features, writing data.local_path
+	python -m scripts.prepare_data --config $(CONFIG)
+
+push: ## Data 3/3: upload the processed data to data.remote_uri
+	python -m scripts.push_data --config $(CONFIG)
+
+data: ingest prepare push ## Run all three data stages in order
 
 train: ## Train a model: make train CONFIG=configs/linear.yaml (default: config.yaml)
 	python -m src.train --config $(CONFIG)

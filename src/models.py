@@ -26,7 +26,7 @@ _ESTIMATORS: dict[str, tuple[str, str, str]] = {
         "HistGradientBoostingRegressor",
     ),
     # XGBoost isn't in requirements.txt yet; see the note there. Its classifier
-    # needs integer labels 0..k-1, so map string targets in scripts/upload_data.py.
+    # needs integer labels 0..k-1, so map string targets in a cleaner in src/prepare.py.
     "xgboost": ("xgboost", "XGBClassifier", "XGBRegressor"),
 }
 

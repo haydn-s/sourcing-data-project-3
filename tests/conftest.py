@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -62,3 +64,18 @@ REGRESSION = (
     "split.stratify=false",
     "evaluation.primary_metric=rmse",
 )
+
+
+def pipeline_config(
+    tmp_path: Path, sources: list[dict[str, Any]], *overrides: str
+) -> PipelineConfig:
+    """The repo's config.yaml with these data sources, reading and writing only temp folders."""
+    return load_config(
+        REPO_CONFIG,
+        [
+            f"ingest.raw_dir={tmp_path / 'raw'}",
+            f"data.local_path={tmp_path / 'processed' / 'data.parquet'}",
+            f"ingest.sources={json.dumps(sources)}",  # JSON is valid YAML
+            *overrides,
+        ],
+    )

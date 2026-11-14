@@ -13,11 +13,42 @@ seed: 42
 task: classification              # classification | regression
 
 data:
-  # When remote_uri is set, training downloads it to local_path first.
+  # The processed table: the data pipeline writes local_path and pushes it to
+  # remote_uri, and training downloads remote_uri to local_path (when it's set).
   # CSV or Parquet, chosen by file extension.
-  remote_uri: null                # e.g. s3://<bucket>/data/processed/<file>.parquet
+  remote_uri: null                # e.g. gs://<bucket>/processed/<file>.parquet
   local_path: data/demo/demo.csv
   target: churned
+
+# Data pipeline, stage 1 (make ingest): fetch each source and save it unchanged
+# as <raw_dir>/<name>.csv. The demo dataset has no sources: make demo-data
+# writes it directly.
+ingest:
+  raw_dir: data/raw
+  remote_prefix: null             # e.g. gs://<bucket>/raw: snapshots are uploaded here too
+  # The first source is the base table. Each later source with join_on is
+  # joined onto it by those columns (how: left by default, or inner); a source
+  # without join_on stays out of the join but feature steps can use it.
+  # ${NAME} values come from environment variables (.env), so keys stay out of git.
+  sources: []
+  # Examples:
+  #   - name: colonies              # lowercase, used for file and cleaner names
+  #     type: http                  # a GET request to a web API
+  #     url: https://quickstats.nass.usda.gov/api/api_GET/
+  #     params: {key: "${NASS_API_KEY}", commodity_desc: HONEY, format: JSON}
+  #     format: json                # json (default) or csv
+  #     records: data               # dotted key path to the list of records
+  #   - name: climate
+  #     type: file                  # CSV/Parquet: local path, http(s) URL, s3://, gs://
+  #     uri: https://example.org/state-climate.csv
+  #     join_on: [state, year]
+  # Other types (paging APIs, several requests) are registered in src/ingest.py.
+
+# Data pipeline, stage 2 (make prepare): clean each source (src/prepare.py),
+# join them, then run these feature steps in order. Stage 3 (make push)
+# uploads the result to data.remote_uri.
+prepare:
+  feature_steps: []               # names registered with @feature_step in src/prepare.py
 
 features:
   # Columns not listed here (other than the target) are ignored.
@@ -28,6 +59,9 @@ split:
   test_size: 0.15
   val_size: 0.15
   stratify: true                  # keep class proportions; classification only
+  # For data that changes over time, name a time column (year, date, ...) to
+  # split by time instead: the latest rows are the test set. Stratify is ignored.
+  time_column: null
 
 model:
   # dummy (baseline) | linear | random_forest | hist_gradient_boosting | xgboost
@@ -49,4 +83,4 @@ tracking:
 
 output:
   local_dir: models               # each run writes models/<run-id>/ and models/latest/
-  remote_prefix: null             # e.g. s3://<bucket>/models
+  remote_prefix: null             # e.g. s3://<bucket>/models or gs://<bucket>/models
