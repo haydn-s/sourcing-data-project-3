@@ -12,7 +12,7 @@ PyDev/
 venv/
 node_modules/
 
-# Data and models come from S3 or a mounted folder at run time
+# Data and models come from Cloud Storage or a mounted folder at run time
 data/
 models/
 wandb/

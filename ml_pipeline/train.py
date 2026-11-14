@@ -1,7 +1,7 @@
 """Train, evaluate, log, and save a model, all driven by a config file.
 
-    python -m src.train --config config.yaml
-    python -m src.train --config configs/linear.yaml --set model.params.C=0.5
+    python -m ml_pipeline.train --config config.yaml
+    python -m ml_pipeline.train --config configs/linear.yaml --set model.params.C=0.5
 
 Each run writes models/<run-id>/ (model.joblib, metadata.json, plots/) and a
 copy in models/latest/, logs everything to W&B, and uploads the model files to
@@ -10,7 +10,6 @@ output.remote_prefix when it's set and AWS credentials are available.
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import platform
@@ -24,16 +23,17 @@ import joblib
 import numpy as np
 import pandas as pd
 import sklearn
-from dotenv import load_dotenv
 from sklearn.pipeline import Pipeline
 
-from src.config import PipelineConfig, load_config
-from src.data import Split, file_sha256, load_dataset, split_dataset
-from src.evaluate import compute_metrics, make_plots
-from src.features import build_preprocessor
-from src.models import build_estimator
-from src.storage import join_uri, upload
-from src.tracking import log_model, log_results, start_run
+from ml_pipeline.data import Split, load_dataset, split_dataset
+from ml_pipeline.evaluate import compute_metrics, make_plots
+from ml_pipeline.features import build_preprocessor
+from ml_pipeline.models import build_estimator
+from ml_pipeline.tracking import log_model, log_results, start_run
+from shared.cli import config_parser, load
+from shared.config import PipelineConfig
+from shared.storage import join_uri, upload
+from shared.tables import file_sha256
 
 log = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ def _to_python(value: Any) -> Any:
 
 
 def _publish(cfg: PipelineConfig, model_dir: Path, run_id: str) -> None:
-    """Copy the run to models/latest/ locally, and to S3 when output.remote_prefix is set."""
+    """Copy the run to models/latest/ locally, and to Cloud Storage when output.remote_prefix is set."""
     latest = cfg.output.local_dir / "latest"
     shutil.rmtree(latest, ignore_errors=True)
     shutil.copytree(model_dir, latest)
@@ -182,24 +182,8 @@ def _publish(cfg: PipelineConfig, model_dir: Path, run_id: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> TrainResult:
-    parser = argparse.ArgumentParser(description="Train a model from a config file.")
-    parser.add_argument(
-        "--config", default="config.yaml", help="config file (default: config.yaml)"
-    )
-    parser.add_argument(
-        "--set",
-        dest="overrides",
-        action="append",
-        default=[],
-        metavar="KEY=VALUE",
-        help="override one config value, e.g. --set model.params.max_depth=5 (repeatable)",
-    )
-    args = parser.parse_args(argv)
-
-    load_dotenv()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    cfg = load_config(args.config, args.overrides)
-    return train(cfg, args.config)
+    args = config_parser("Train a model from a config file.").parse_args(argv)
+    return train(load(args), args.config)
 
 
 if __name__ == "__main__":

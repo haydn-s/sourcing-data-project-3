@@ -36,5 +36,5 @@ docstring-code-format = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]  # lets tests import src/, api/ without installing a package
+pythonpath = ["."]  # lets tests import the packages (shared, data_pipeline, ...) without installing them
 addopts = "-ra"

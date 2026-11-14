@@ -8,7 +8,7 @@
 
 -r requirements-dev.txt     # pre-commit, pytest, httpx2
 -r requirements.txt         # the pipeline and API: numpy, pandas, pyarrow, scikit-learn,
-                            # boto3, wandb, matplotlib, FastAPI, ...
+                            # google-cloud-storage, wandb, matplotlib, FastAPI, ...
 # Shared packages are pinned only in requirements.txt, so PyDev and the Docker
 # image always match. That matters most for scikit-learn: a model saved with
 # one version may not load in another.

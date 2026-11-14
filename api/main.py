@@ -5,7 +5,7 @@ Run it with the app factory, since the request schema depends on the model:
     uvicorn api.main:create_app --factory --port 8080
 
 MODEL_URI picks the model: a local path (default: models/latest/model.joblib)
-or an s3:// URI. metadata.json is read from the same folder. S3 files are
+or a gs:// URI. metadata.json is read from the same folder. Cloud Storage files are
 downloaded to MODEL_CACHE_DIR (default: a folder under /tmp, the only writable
 path on Lambda).
 
@@ -29,7 +29,7 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
 from api.schemas import HealthResponse, MetadataResponse, PredictResponse, build_request_model
-from src.storage import download, is_s3_uri, join_uri
+from shared.storage import download, is_gcs_uri, join_uri
 
 log = logging.getLogger(__name__)
 
@@ -51,9 +51,9 @@ class ModelBundle:
 
 
 def load_bundle(model_uri: str) -> ModelBundle:
-    """Load model.joblib and the metadata.json next to it, from disk or S3."""
+    """Load model.joblib and the metadata.json next to it, from disk or Cloud Storage."""
     metadata_uri = join_uri(model_uri.rsplit("/", 1)[0], "metadata.json")
-    if is_s3_uri(model_uri):
+    if is_gcs_uri(model_uri):
         cache = Path(os.environ.get("MODEL_CACHE_DIR", Path(tempfile.gettempdir()) / "model-cache"))
         model_path = download(model_uri, cache / "model.joblib")
         metadata_path = download(metadata_uri, cache / "metadata.json")

@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from src.config import PipelineConfig
-from src.storage import download
+from shared.config import PipelineConfig
+from shared.storage import download
+from shared.tables import missing_columns, read_table
 
 log = logging.getLogger(__name__)
 
@@ -27,38 +26,6 @@ class Split:
 
     def sizes(self) -> dict[str, int]:
         return {"train": len(self.y_train), "val": len(self.y_val), "test": len(self.y_test)}
-
-
-def read_table(path: str | Path) -> pd.DataFrame:
-    """Read a CSV or Parquet file (local path or URL), chosen by extension."""
-    suffix = Path(str(path).split("?")[0]).suffix.lower()
-    if suffix == ".csv":
-        return pd.read_csv(path)
-    if suffix in {".parquet", ".pq"}:
-        return pd.read_parquet(path)
-    raise ValueError(f"unsupported file type '{suffix}' for {path}: use .csv or .parquet")
-
-
-def write_table(frame: pd.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.suffix.lower() == ".csv":
-        frame.to_csv(path, index=False)
-    elif path.suffix.lower() in {".parquet", ".pq"}:
-        frame.to_parquet(path, index=False)
-    else:
-        raise ValueError(f"unsupported file type '{path.suffix}' for {path}: use .csv or .parquet")
-
-
-def file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def missing_columns(frame: pd.DataFrame, cfg: PipelineConfig) -> list[str]:
-    return [c for c in (*cfg.features.all, cfg.data.target) if c not in frame.columns]
 
 
 def load_dataset(cfg: PipelineConfig) -> pd.DataFrame:
@@ -85,7 +52,12 @@ def load_dataset(cfg: PipelineConfig) -> pd.DataFrame:
 
 
 def split_dataset(frame: pd.DataFrame, cfg: PipelineConfig) -> Split:
-    """Seeded train/validation/test split, stratified for classification when configured."""
+    """Seeded train/validation/test split, stratified for classification when configured.
+
+    With `split.time_column` set, the split goes by time instead (see split_by_time).
+    """
+    if cfg.split.time_column:
+        return split_by_time(frame, cfg)
     X = frame[cfg.features.all]
     y = frame[cfg.data.target]
     stratify = cfg.task == "classification" and cfg.split.stratify
@@ -107,3 +79,37 @@ def split_dataset(frame: pd.DataFrame, cfg: PipelineConfig) -> Split:
         stratify=y_rest if stratify else None,
     )
     return Split(X_train, X_val, X_test, y_train, y_val, y_test)
+
+
+def split_by_time(frame: pd.DataFrame, cfg: PipelineConfig) -> Split:
+    """The latest rows become the test set, and the ones just before them the validation set.
+
+    A random split would let the model learn from rows that come after the ones
+    it's tested on. The cut points fall between time values, so rows from the
+    same period (one quarter across every state, say) always land in the same set.
+    """
+    column = cfg.split.time_column
+    times = frame[column]
+    if times.isna().any():
+        raise ValueError(
+            f"time_column '{column}' has {int(times.isna().sum())} missing values. "
+            "Drop or fill them when preparing the data"
+        )
+    ordered = times.sort_values(kind="stable").reset_index(drop=True)
+    n = len(ordered)
+    test_start = ordered.iloc[min(n - 1, round(n * (1 - cfg.split.test_size)))]
+    val_start = ordered.iloc[round(n * (1 - cfg.split.test_size - cfg.split.val_size))]
+
+    is_test = times >= test_start
+    is_val = (times >= val_start) & ~is_test
+    is_train = ~(is_test | is_val)
+    if not (is_train.any() and is_val.any() and is_test.any()):
+        raise ValueError(
+            f"time_column '{column}' has too few distinct values ({times.nunique()}) "
+            "to make separate train, validation, and test periods"
+        )
+    log.info("Split by %s: validation from %s, test from %s", column, val_start, test_start)
+
+    X = frame[cfg.features.all]
+    y = frame[cfg.data.target]
+    return Split(X[is_train], X[is_val], X[is_test], y[is_train], y[is_val], y[is_test])

@@ -15,7 +15,7 @@ import pandas as pd
 from sklearn import metrics
 from sklearn.pipeline import Pipeline
 
-from src.config import Task
+from shared.config import Task
 
 log = logging.getLogger(__name__)
 

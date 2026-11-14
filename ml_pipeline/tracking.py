@@ -12,7 +12,7 @@ from typing import Any
 
 import wandb
 
-from src.config import PipelineConfig
+from shared.config import PipelineConfig
 
 
 def start_run(cfg: PipelineConfig, config_path: str | Path) -> wandb.Run:

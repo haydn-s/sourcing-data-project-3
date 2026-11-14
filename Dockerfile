@@ -36,9 +36,10 @@ RUN pip install -r requirements.txt
 
 COPY entrypoint.sh config.yaml ./
 COPY configs/ configs/
-COPY src/ src/
+COPY shared/ shared/
+COPY data_pipeline/ data_pipeline/
+COPY ml_pipeline/ ml_pipeline/
 COPY api/ api/
-COPY scripts/ scripts/
 
 EXPOSE 8080
 ENTRYPOINT ["./entrypoint.sh"]

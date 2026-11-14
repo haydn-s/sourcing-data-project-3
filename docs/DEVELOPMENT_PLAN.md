@@ -25,13 +25,13 @@ Goal: leave the meeting with every decision below made, owners assigned, and dat
 |---|---|---|---|
 | 1 | **Dataset & problem** | TODO | Pick using the criteria in [§3](#3-choosing-a-dataset) |
 | 2 | Task type, target, metric | TODO | Write down the baseline we'll compare against |
-| 3 | **Cloud provider** | ✅ **AWS** (decided Nov 7) | **S3** stores the data and models. The API runs on **Lambda** as a container image (stored in **ECR**) behind a public **Function URL**. One provider, and IAM roles grant access instead of stored keys. Lambda's always-free allowance (1M requests a month) covers a class demo. Pick one region (e.g. `us-east-1`) and use it everywhere. Ruled out: App Runner (closed to new customers since Apr 30, 2026), Supabase (pauses after a week idle, 50 MB file cap, can't run containers), and GCS, Firebase Storage, and Cloud SQL (all GCP; Firebase Storage also needs a billing account, and Cloud SQL has no free tier) |
-| 4 | Data storage | ✅ **One S3 bucket, versioning on** | `data/processed/` is publicly readable through a bucket policy, so graders can rerun training without our credentials (the data is public anyway). `models/` stays private, and the Lambda reads it through its IAM role. With versioning on, W&B records exactly which version of a file each run used |
+| 3 | **Cloud provider** | ✅ **Google Cloud Storage + AWS Lambda** (revised Nov 14) | **Cloud Storage** (project `climate-impact-pipeline`) stores the data and models. The API runs on **Lambda** as a container image (stored in **ECR**) behind a public **Function URL**, and loads the model from the public bucket, so it holds no cloud keys. Lambda's always-free allowance (1M requests a month) covers a class demo, and Cloud Storage's free tier covers 5 GB in `us-east1`. Ruled out: App Runner (closed to new customers since Apr 30, 2026), Supabase (pauses after a week idle, 50 MB file cap, can't run containers), Firebase Storage (needs a billing account), and Cloud SQL (no free tier) |
+| 4 | Data storage | ✅ **One Cloud Storage bucket, versioning on** (`climate-impact-pipeline-data`, `us-east1`) | `raw/` holds the snapshots, `processed/` the cleaned table, and `models/` the trained models. The whole bucket is publicly readable (uniform bucket-level access), so graders can rerun training without our credentials and the Lambda loads the model without Google keys. The data is public anyway; the models are public too. With versioning on, every pushed file keeps its earlier versions |
 | 5 | Experiment tracker | ✅ **Weights & Biases** | Hosted dashboard that both of us (and graders, if the project is public) can see without running a server. Free academic plan (Pro features, 200 GB) with a duke.edu email. W&B is now part of CoreWeave Forge, but the `wandb` SDK is unchanged. Alternative considered: MLflow, which works offline but needs a hosted tracking server (or DagsHub) to share runs |
 | 6 | Model | **scikit-learn RandomForest or XGBoost** | Keep a logistic/linear regression baseline for comparison |
 | 7 | API framework | **FastAPI** | Pydantic validation and Swagger docs at `/docs` for free |
 | 8 | Front-end | **Streamlit on Streamlit Community Cloud** | Deploys from the GitHub repo. Alternative: Gradio on Hugging Face Spaces |
-| 9 | Model delivery to API | **Load from S3 at startup** (`MODEL_URI=s3://<bucket>/models/latest/model.joblib`) | Keeps the image independent of the model. Lambda can only write to `/tmp`, so download the model there. Fallback: copy `model.joblib` into the image at build time |
+| 9 | Model delivery to API | **Load from Cloud Storage at startup** (`MODEL_URI=gs://climate-impact-pipeline-data/models/latest/model.joblib`) | Keeps the image independent of the model. Lambda can only write to `/tmp`, so download the model there. Fallback: copy `model.joblib` into the image at build time |
 | 10 | Cloud account & billing owner | TODO | Whose AWS account? Give each of us our own login (IAM Identity Center or an IAM user, never the root user). Set a budget alert. New accounts get up to $200 in credits on a 6-month Free plan, and AWS closes the account when it ends unless we upgrade. Upgrade before then if we reuse this pipeline in Spring 2027 |
 | 11 | Work split & owners | See [§7](#7-work-split) | |
 | 12 | Communication & cadence | TODO | e.g. a short async check-in every 2–3 days, a sync before integration |
@@ -63,10 +63,10 @@ Goal: leave the meeting with every decision below made, owners assigned, and dat
 
 ```mermaid
 flowchart LR
-    SRC[Public dataset] -->|upload_data.py| STORED[(S3: data/processed/)]
+    SRC[Public data sources] -->|ingest → prepare → push| STORED[(Cloud Storage: processed/)]
     STORED --> TRAIN[train.py + config.yaml]
     TRAIN --> WB[W&B]
-    TRAIN --> STOREM[(S3: models/)]
+    TRAIN --> STOREM[(Cloud Storage: models/)]
     STOREM --> API[FastAPI on AWS Lambda<br/>image from ECR]
     UI[Streamlit Cloud] -->|POST /predict<br/>Function URL| API
 ```
@@ -74,13 +74,13 @@ flowchart LR
 | Layer | Tool |
 |---|---|
 | Language | Python 3.12 |
-| Data | pandas + boto3 (S3) |
+| Data | pandas, requests (web APIs), google-cloud-storage |
 | ML | scikit-learn (+ XGBoost, optional) |
 | Config | YAML (`pyyaml`), optionally validated with Pydantic |
 | Tracking | Weights & Biases |
 | Serving | FastAPI + Uvicorn, run on Lambda through the [AWS Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter) |
 | Container | Docker (one image, `train` / `serve` entry points) |
-| Cloud | AWS: S3 (data and models), ECR (container images), Lambda with a Function URL (API), IAM roles (permissions) |
+| Cloud | Google Cloud: Cloud Storage (data and models). AWS: ECR (container images) and Lambda with a Function URL (API) |
 | Front-end | Streamlit + `requests`, hosted on Streamlit Community Cloud |
 | Tests | pytest, FastAPI `TestClient` |
 | Local environment | PyDev: a Python 3.12 venv built from `requirements-pydev.txt` with `make venv` |
@@ -116,7 +116,7 @@ POST /predict   → body: one JSON object with one key per feature
 
 The `/predict` request schema is generated from the model's `metadata.json`, so the API code doesn't change when the feature list does. The Streamlit form can do the same by reading `/metadata`.
 
-**Model artifact.** A single `model.joblib` holding the full sklearn `Pipeline`, stored at `s3://<bucket>/models/<run-id>/model.joblib` with a copy at `s3://<bucket>/models/latest/model.joblib`. A `metadata.json` sits next to it: run ID, timestamp, task, metrics, features (numeric ranges, allowed categories), class labels, an example request, the data file's SHA-256, library versions, and the full config.
+**Model artifact.** A single `model.joblib` holding the full sklearn `Pipeline`, stored at `gs://climate-impact-pipeline-data/models/<run-id>/model.joblib` with a copy at `gs://climate-impact-pipeline-data/models/latest/model.joblib`. A `metadata.json` sits next to it: run ID, timestamp, task, metrics, features (numeric ranges, allowed categories), class labels, an example request, the data file's SHA-256, library versions, and the full config.
 
 ## 6. Milestones & Tasks
 
@@ -142,18 +142,19 @@ The `/predict` request schema is generated from the model's `metadata.json`, so 
 - [x] PyDev environment (`make venv`), shared ruff style (`pyproject.toml`), and `make pr-ready`
 - [ ] Jothi: run `make venv`, `source PyDev/bin/activate`, and `make setup`
 - [ ] Set up the AWS account: billing, a budget alert, and a login for each of us (see decision 10)
-- [ ] Create the S3 bucket (versioning on, public read for `data/processed/` only) and the ECR repository, both in our chosen region
+- [x] Create the Cloud Storage bucket `climate-impact-pipeline-data` (`us-east1`, versioning on, public read)
+- [ ] Create the ECR repository in our AWS region
 - [ ] Apply for the W&B academic plan with a duke.edu email, create a team, invite Jothi, and create a **public** project
 - [x] Scaffold the code layout: folders, `.env.example`, `config.yaml`, `requirements.txt` (plus the dataset-agnostic framework; see Phase 1)
 
 ### Phase 1: Parallel build · Target: Sun, Nov 15 (walking skeleton by Thu, Nov 12)
 
-> **Framework status (Nov 7, `pipeline-tooling` branch).** The parts of these tasks that don't depend on the dataset are built and tested on a synthetic demo dataset: config loading and validation, S3 storage, data loading and splitting, preprocessing, the model registry, metrics and plots, W&B logging, the training CLI, the FastAPI app, the Dockerfile and entrypoint, and a Docker smoke test in CI. What's left in each task is dataset-specific:
+> **Framework status (Nov 7, `pipeline-tooling` branch).** The parts of these tasks that don't depend on the dataset are built and tested on a synthetic demo dataset: config loading and validation, cloud storage, data loading and splitting, preprocessing, the model registry, metrics and plots, W&B logging, the training CLI, the FastAPI app, the Dockerfile and entrypoint, and a Docker smoke test in CI. What's left in each task is dataset-specific:
 >
 > | Task | Remaining |
 > |---|---|
 > | A1 | All of it (EDA) |
-> | A2 | Write `clean()` in `scripts/upload_data.py`, then run it against S3 |
+> | A2 | The three-stage data pipeline is built (`data-pipeline` branch, Nov 14). Add the real sources to `config.yaml`, write their cleaners and feature steps in `data_pipeline/prepare.py`, then run `make data` |
 > | A3, A4 | Set the real feature lists and target in `config.yaml`. Add tests for any dataset-specific preprocessing |
 > | A5–A7 | Pick the metric and baseline, run the experiments, fill in the results table |
 > | B1, B2 | Replace `tests/sample_request.json` with a real record |
@@ -167,21 +168,21 @@ The `/predict` request schema is generated from the model's `metadata.json`, so 
 | ID | Task | Done when | Owner | PR |
 |---|---|---|---|---|
 | A1 | EDA notebook: understand the data, find cleaning needs, check for target leakage | Short findings written in the notebook | | |
-| A2 | `scripts/upload_data.py`: download raw data → clean → upload processed CSV/Parquet to S3 under `data/processed/` | Processed file is in S3. Script is re-runnable | | |
-| A3 | `src/config.py` + `src/data.py`: load config, download processed data from S3 with boto3 (add it to `requirements.txt`). Fall back to unsigned (anonymous) requests when no AWS credentials are set, so graders can run it | `python -c` smoke test loads a DataFrame, with and without AWS credentials | | |
-| A4 | `src/features.py`: `ColumnTransformer` (impute, scale, encode) driven by the feature lists in config | Unit test passes on a small sample | | |
-| A5 | `src/train.py` + `src/evaluate.py`: train/val/test split (seeded), train the model from config, compute metrics, save `model.joblib` + `metadata.json` locally and to S3 (`models/<run-id>/` and `models/latest/`). Skip the S3 upload, with a warning, when no AWS credentials are set | Baseline and main model both train from config | | |
-| A6 | W&B integration: log config, metrics, confusion matrix / residual plot, feature importance, and the model as a W&B artifact (upload the file, or add an `s3://` reference). Honor `WANDB_MODE=offline` / `disabled` so anyone can train without a W&B account | Runs appear on the dashboard with plots and the artifact. Training also runs with `WANDB_MODE=disabled` | | |
+| A2 | `data_pipeline/`: `ingest.py`, `prepare.py`, `push.py`: fetch raw data from APIs → clean, join, and add features → upload the processed table to Cloud Storage under `processed/` | Processed file is in Cloud Storage. Scripts are re-runnable | | |
+| A3 | `shared/config.py` + `ml_pipeline/data.py`: load config, download processed data from Cloud Storage with google-cloud-storage (add it to `requirements.txt`). Read anonymously, since the bucket is public, so graders can run it | `python -c` smoke test loads a DataFrame, with and without Google credentials | | |
+| A4 | `ml_pipeline/features.py`: `ColumnTransformer` (impute, scale, encode) driven by the feature lists in config | Unit test passes on a small sample | | |
+| A5 | `ml_pipeline/train.py` + `ml_pipeline/evaluate.py`: train/val/test split (seeded), train the model from config, compute metrics, save `model.joblib` + `metadata.json` locally and to Cloud Storage (`models/<run-id>/` and `models/latest/`). Skip the upload, with a warning, when no Google credentials are set | Baseline and main model both train from config | | |
+| A6 | W&B integration: log config, metrics, confusion matrix / residual plot, feature importance, and the model as a W&B artifact (upload the file, or add a `gs://` reference). Honor `WANDB_MODE=offline` / `disabled` so anyone can train without a W&B account | Runs appear on the dashboard with plots and the artifact. Training also runs with `WANDB_MODE=disabled` | | |
 | A7 | Run 3–5 experiments (different models or hyperparameters) and pick the final model | Results table in the README links to the runs | | |
 
 #### Track B: Serving, deployment & front-end
 
 | ID | Task | Done when | Owner | PR |
 |---|---|---|---|---|
-| B1 | `api/schemas.py` + `api/main.py`: FastAPI with `/health` and `/predict`, loading a model from `MODEL_URI` (a local path, or an `s3://` URI downloaded to `/tmp`, the only writable folder on Lambda). Start with a **stub model** trained quickly on the raw data | `curl` against localhost returns a prediction | | |
+| B1 | `api/schemas.py` + `api/main.py`: FastAPI with `/health` and `/predict`, loading a model from `MODEL_URI` (a local path, or a `gs://` URI downloaded to `/tmp`, the only writable folder on Lambda). Start with a **stub model** trained quickly on the raw data | `curl` against localhost returns a prediction | | |
 | B2 | `tests/test_api.py` + `tests/sample_request.json` | `pytest` passes | | |
 | B3 | `Dockerfile` + `entrypoint.sh`: one image, `train` and `serve` commands, `serve` is the default and listens on `$PORT` (8080). Copy in the [AWS Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter) so the same image runs on Lambda, and set `AWS_LWA_READINESS_CHECK_PATH=/health` | `docker run ... train` and `docker run -p 8080:8080 ... serve` both work locally | | |
-| B4 | Deploy the API to AWS Lambda: push the image to ECR, create the function from it (about 2 GB memory, 30 s timeout), give its IAM role read access to `models/` in S3, and add a public Function URL (auth type `NONE`). Steps are in README §Usage 5 | The Function URL answers `/predict` via `curl` | | |
+| B4 | Deploy the API to AWS Lambda: push the image to ECR, create the function from it (about 2 GB memory, 30 s timeout), set `MODEL_URI` to the model in the public bucket, and add a public Function URL (auth type `NONE`). Steps are in README §Usage 5 | The Function URL answers `/predict` via `curl` | | |
 | B5 | `frontend/app.py`: Streamlit form for the frozen feature list → `requests.post` to `API_URL` → show the prediction, confidence, and a short explanation and disclaimer. Handle API errors and timeouts | Works locally against both the local API and the deployed API | | |
 | B6 | Deploy the front-end to Streamlit Community Cloud with `API_URL` set in Secrets | Public link works in an incognito window | | |
 
@@ -189,8 +190,8 @@ The `/predict` request schema is generated from the model's `metadata.json`, so 
 
 ### Phase 2: Integration *(together)* · Target: Wed, Nov 18
 
-- [ ] Point the deployed API's `MODEL_URI` at the real model in S3 and redeploy
-- [ ] End-to-end test: run training in Docker → model lands in S3 → redeploy → front-end shows the new `model_version`
+- [ ] Point the deployed API's `MODEL_URI` at the real model in Cloud Storage and redeploy
+- [ ] End-to-end test: run training in Docker → model lands in Cloud Storage → redeploy → front-end shows the new `model_version`
 - [ ] Do a fresh-clone reproducibility test: one of us follows the README from scratch on a clean machine or folder
 - [ ] Improve the front-end: input validation, sensible defaults, maybe a chart (probability bar, feature importance) to make it interactive and intuitive
 
@@ -274,8 +275,8 @@ gh api -X PUT "repos/haydn-s/sourcing-data-project-3/rulesets/$RULESET_ID" --inp
 | Lambda rejects or can't run the image: `exec format error` (an Apple Silicon build) or "The image manifest, config or layer media type ... is not supported" (buildx attestations) | Build for one platform without attestations: `docker buildx build --platform linux/amd64 --provenance=false --sbom=false`. Set the function's architecture to `x86_64` to match |
 | Function URL returns 403 Forbidden | Since October 2025, a public Function URL needs both `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` in the function's resource policy. The console adds both when you choose auth type `NONE`. With the CLI, add each one yourself |
 | Slow Lambda cold start | The first request after idle loads scikit-learn and downloads the model. Give the function about 2 GB of memory (which also gives it more CPU), keep torch and TensorFlow out of the image, and give the Streamlit request a generous timeout |
-| Credentials leak into git | `.gitignore` covers `.env` and key files. gitleaks runs on commit and in CI, and GitHub push protection checks every push. The Lambda reads S3 through its IAM role, and CI should use a GitHub OIDC role, so neither needs long-lived keys. If a key leaks, rotate it first |
-| Surprise cloud bill | Budget alert. Lambda scales to zero and its always-free allowance covers our traffic. Small dataset. Tear down after grading |
+| Credentials leak into git | `.gitignore` covers `.env` and key files. gitleaks runs on commit and in CI, and GitHub push protection checks every push. The Lambda reads the public bucket, so it holds no cloud keys, and CI should sign in with GitHub OIDC (Workload Identity Federation on Google Cloud) instead of stored keys. If a key leaks, rotate it first |
+| Surprise cloud bill | Budget alerts on both accounts. Lambda scales to zero and its always-free allowance covers our traffic. Downloads from the public bucket are billed to us, but the files are small. Tear down after grading |
 | Someone skips the local hooks (`git commit --no-verify`) | CI re-runs commitlint and the pre-commit hooks on every PR, and branch protection blocks the merge until they pass |
 | Required review stalls merging when one of us is busy | Keep PRs small. Agree at kickoff to review within a day |
 | Training/serving skew (API transforms differ from training) | Serialize one sklearn `Pipeline`. The API never re-implements preprocessing |
@@ -289,7 +290,7 @@ Maps each assignment requirement to where we satisfy it. Tick these off before s
 
 **Repository**
 
-- [ ] Code for preprocessing, training, serving, and deployment → `scripts/`, `src/`, `api/`, `Dockerfile`
+- [ ] Code for preprocessing, training, serving, and deployment → `data_pipeline/`, `ml_pipeline/`, `shared/`, `api/`, `Dockerfile`
 - [ ] `config.yaml` controls pipeline parameters
 - [ ] `requirements.txt`
 - [ ] `Dockerfile` that runs the full project, with `train` and `serve` entry points

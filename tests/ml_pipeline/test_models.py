@@ -3,7 +3,7 @@ import inspect
 import pytest
 from sklearn.base import is_classifier, is_regressor
 
-from src.models import build_estimator
+from ml_pipeline.models import build_estimator
 
 
 @pytest.mark.parametrize("task", ["classification", "regression"])

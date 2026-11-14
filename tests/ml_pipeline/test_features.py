@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.config import FeaturesConfig
-from src.features import build_preprocessor
+from ml_pipeline.features import build_preprocessor
+from shared.config import FeaturesConfig
 
 
 def test_imputes_missing_values_and_ignores_unseen_categories() -> None:

@@ -5,10 +5,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-import src.train
-from src.config import PipelineConfig
-from src.data import load_dataset, split_dataset
-from src.train import main, train
+import ml_pipeline.train
+from ml_pipeline.data import load_dataset, split_dataset
+from ml_pipeline.train import main, train
+from shared.config import PipelineConfig
 from tests.conftest import REGRESSION, REPO_CONFIG
 
 ConfigFor = Callable[..., PipelineConfig]
@@ -64,12 +64,14 @@ def test_uploads_run_and_latest_when_remote_prefix_is_set(
     config_for: ConfigFor, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     uploaded: list[str] = []
-    monkeypatch.setattr(src.train, "upload", lambda src_path, uri: uploaded.append(uri) or True)
+    monkeypatch.setattr(
+        ml_pipeline.train, "upload", lambda src_path, uri: uploaded.append(uri) or True
+    )
 
-    result = train(config_for("output.remote_prefix=s3://bucket/models"))
+    result = train(config_for("output.remote_prefix=gs://bucket/models"))
 
     assert sorted(uploaded) == sorted(
-        f"s3://bucket/models/{folder}/{name}"
+        f"gs://bucket/models/{folder}/{name}"
         for folder in (result.run_id, "latest")
         for name in ("model.joblib", "metadata.json")
     )

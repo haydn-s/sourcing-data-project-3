@@ -5,7 +5,7 @@ few missing values to exercise the imputers, a yes/no target (`churned`) for
 classification, and a numeric target (`lifetime_value`) for regression. None of
 it describes real people.
 
-    python -m src.demo_data              # writes data/demo/demo.csv
+    python -m ml_pipeline.demo_data              # writes data/demo/demo.csv
 """
 
 from __future__ import annotations

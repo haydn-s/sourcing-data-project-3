@@ -2,7 +2,7 @@
 
 These transforms are part of the saved model pipeline, so the API applies
 exactly what training did. Dataset-specific cleaning (dropping columns, fixing
-types) happens earlier, in scripts/upload_data.py.
+types) happens earlier, in the data pipeline (data_pipeline/prepare.py).
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from src.config import FeaturesConfig
+from shared.config import FeaturesConfig
 
 
 def build_preprocessor(features: FeaturesConfig) -> ColumnTransformer:
