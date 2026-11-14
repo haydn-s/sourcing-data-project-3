@@ -16,7 +16,7 @@ import logging
 
 from scripts._cli import config_parser, load
 from src.config import PipelineConfig
-from src.data import file_sha256, missing_columns, read_table
+from src.data import file_sha256, missing_columns, table_columns
 from src.storage import public_url, upload
 
 log = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ def push(cfg: PipelineConfig, *, force: bool = False) -> str:
     if not path.exists():
         raise SystemExit(f"no processed data at {path}. Run: make prepare")
 
-    missing = missing_columns(read_table(path), cfg)
+    missing = missing_columns(table_columns(path), cfg)
     if missing and not force:
         raise SystemExit(
             f"{path} lacks columns the config expects: {missing}. Fix the config or "

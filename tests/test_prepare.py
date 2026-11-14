@@ -93,6 +93,16 @@ def test_joins_that_would_go_wrong_are_rejected(right: pd.DataFrame, message: st
         prepare.join_one(left, right, source("climate", ["state"]))
 
 
+def test_blank_join_keys_never_match() -> None:
+    left = frame(state=["NC", None])
+    right = frame(state=["NC", None], temp=[15.0, 99.0])
+
+    joined = prepare.join_one(left, right, source("climate", ["state"]))
+
+    assert joined["temp"].tolist()[0] == 15.0
+    assert np.isnan(joined["temp"].iloc[1])  # not the 99.0 from the other blank-key row
+
+
 def write_csv(path: Path, data: pd.DataFrame) -> str:
     data.to_csv(path, index=False)
     return str(path)
@@ -201,3 +211,26 @@ def test_command_line_writes_the_processed_table(tmp_path: Path, two_sources: li
 
     assert len(table) == 60
     assert cfg.data.local_path.exists()
+
+
+def test_cleaner_must_return_a_frame(
+    tmp_path: Path, two_sources: list[dict], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def forgets_to_return(data: pd.DataFrame) -> None:
+        data["region"] = data["region"].str.upper()
+
+    monkeypatch.setitem(prepare.CLEANERS, "customers", forgets_to_return)
+    cfg = pipeline_config(tmp_path, two_sources)
+    ingest(cfg)
+
+    with pytest.raises(TypeError, match="the cleaner for customers returned NoneType"):
+        prepare.prepare(cfg)
+
+
+def test_empty_snapshot_names_the_source(tmp_path: Path, two_sources: list[dict]) -> None:
+    cfg = pipeline_config(tmp_path, two_sources)
+    cfg.ingest.raw_dir.mkdir(parents=True)
+    (cfg.ingest.raw_dir / "customers.csv").write_text("")
+
+    with pytest.raises(ValueError, match=r"snapshot of source 'customers'.*is empty"):
+        prepare.prepare(cfg)

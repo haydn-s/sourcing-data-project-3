@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from google.api_core import exceptions
+from google.auth.exceptions import RefreshError
 
 from src import storage
 
@@ -57,6 +58,7 @@ class FakeGCS:
         self.private: set[str] = set()
         self.cache_control: dict[str, str | None] = {}
         self.requests: list[tuple[str, bool]] = []  # (what, signed)
+        self.login_expired = False
 
     def client(self, *, signed: bool) -> FakeClient:
         return FakeClient(self, signed)
@@ -84,6 +86,8 @@ class FakeBlob:
         self.cache_control: str | None = None
 
     def upload_from_filename(self, filename: str) -> None:
+        if self.gcs.login_expired:
+            raise RefreshError("Reauthentication is needed")
         self.gcs.requests.append(("upload", self.signed))
         self.gcs.objects[self.uri] = Path(filename).read_bytes()
         self.gcs.cache_control[self.uri] = self.cache_control
@@ -182,3 +186,30 @@ def test_missing_google_credentials_are_detected(monkeypatch: pytest.MonkeyPatch
 def test_tests_cannot_reach_the_real_bucket(tmp_path: Path) -> None:
     with pytest.raises(AssertionError, match="tried to reach Cloud Storage"):
         storage.download("gs://climate-impact-pipeline-data/raw/x.csv", tmp_path / "x.csv")
+
+
+def test_failed_download_leaves_no_partial_file_and_keeps_the_old_one(
+    gcs: FakeGCS, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gcs.objects["gs://bucket/private.csv"] = b"secret"
+    gcs.private.add("gs://bucket/private.csv")
+    monkeypatch.setattr(storage, "has_gcp_credentials", lambda: False)
+    fresh, cached = tmp_path / "fresh.csv", tmp_path / "cached.csv"
+    cached.write_text("last good copy")
+
+    for dest in (fresh, cached):
+        with pytest.raises(PermissionError):
+            storage.download("gs://bucket/private.csv", dest)
+
+    assert not fresh.exists()  # no empty file left to look like a cached copy
+    assert cached.read_text() == "last good copy"
+    assert list(tmp_path.glob("*.part")) == []
+
+
+def test_expired_login_explains_how_to_sign_in_again(gcs: FakeGCS, tmp_path: Path) -> None:
+    gcs.login_expired = True
+    src = tmp_path / "data.csv"
+    src.write_text("x")
+
+    with pytest.raises(PermissionError, match=r"expired\. Sign in again"):
+        storage.upload(src, "gs://bucket/processed/data.csv")

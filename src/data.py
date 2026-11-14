@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,10 +58,26 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def missing_columns(frame: pd.DataFrame, cfg: PipelineConfig) -> list[str]:
-    """Columns the config names (features, target, time column) that `frame` doesn't have."""
+def table_columns(path: Path) -> list[str]:
+    """A CSV or Parquet file's column names, read without loading its rows."""
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return list(pd.read_csv(path, nrows=0).columns)
+    if suffix in {".parquet", ".pq"}:
+        import pyarrow.parquet as pq
+
+        return list(pq.read_schema(path).names)
+    raise ValueError(f"unsupported file type '{path.suffix}' for {path}: use .csv or .parquet")
+
+
+def missing_columns(table: pd.DataFrame | Iterable[str], cfg: PipelineConfig) -> list[str]:
+    """Columns the config names (features, target, time column) that a table doesn't have.
+
+    `table` is a DataFrame or its column names.
+    """
+    present = set(table.columns if isinstance(table, pd.DataFrame) else table)
     needed = dict.fromkeys([*cfg.features.all, cfg.data.target, cfg.split.time_column])
-    return [c for c in needed if c is not None and c not in frame.columns]
+    return [c for c in needed if c is not None and c not in present]
 
 
 def load_dataset(cfg: PipelineConfig) -> pd.DataFrame:

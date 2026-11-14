@@ -70,7 +70,7 @@ def expand_env(value: Any, *, source: str) -> Any:
 
         def lookup(match: re.Match[str]) -> str:
             name = match.group(1)
-            if name not in os.environ:
+            if not os.environ.get(name):  # unset, or blank in .env
                 raise ValueError(
                     f"source '{source}' needs the environment variable {name}. "
                     "Add it to .env (see .env.example)"
@@ -85,17 +85,41 @@ def expand_env(value: Any, *, source: str) -> Any:
     return value
 
 
+def env_names(source: SourceConfig) -> list[str]:
+    """The environment variables a source refers to as `${NAME}`."""
+    return sorted(set(_ENV_REFERENCE.findall(json.dumps(source.model_dump(mode="json")))))
+
+
 def secrets_in(source: SourceConfig) -> list[str]:
-    """The environment values a source refers to, so error messages can hide them."""
-    text = json.dumps(source.model_dump(mode="json"))
-    names = set(_ENV_REFERENCE.findall(text))
-    return [os.environ[name] for name in names if os.environ.get(name)]
+    """The environment values a source refers to, so they can be hidden from errors and snapshots."""
+    return [os.environ[name] for name in env_names(source) if os.environ.get(name)]
 
 
 def scrub(text: str, secrets: Iterable[str]) -> str:
     for secret in secrets:
         text = text.replace(secret, "***")
     return text
+
+
+def scrub_frame(frame: pd.DataFrame, secrets: Iterable[str]) -> tuple[pd.DataFrame, int]:
+    """Replace secrets inside text cells with ***. Returns the frame and how many cells changed.
+
+    Some APIs echo the request, API key included, into their records, and
+    snapshots are uploaded to a public bucket.
+    """
+    secrets = [secret for secret in secrets if secret]
+    if not secrets:
+        return frame, 0
+    frame, changed = frame.copy(), 0
+    for column in frame.columns:
+        values = frame[column]
+        if not pd.api.types.is_string_dtype(values.dtype):
+            continue
+        leaks = values.map(lambda v: isinstance(v, str) and any(s in v for s in secrets))
+        if leaks.any():
+            changed += int(leaks.sum())
+            frame[column] = values.map(lambda v: scrub(v, secrets) if isinstance(v, str) else v)
+    return frame, changed
 
 
 # Built-in source types
@@ -119,8 +143,19 @@ def fetch_http(source: SourceConfig) -> pd.DataFrame:
         secrets=secrets_in(source),
     )
     if source.format == "csv":
-        return pd.read_csv(io.StringIO(response.text))
+        return pd.read_csv(io.StringIO(response_text(response)))
     return records_frame(response.json(), source.records, source=source.name)
+
+
+def response_text(response) -> str:
+    """The body as text, read as UTF-8 unless the server names a charset.
+
+    Without one, requests decodes text/* responses as ISO-8859-1, which garbles
+    UTF-8 names like "Québec".
+    """
+    if "charset" in response.headers.get("Content-Type", "").lower():
+        return response.text
+    return response.content.decode("utf-8-sig", errors="replace")
 
 
 def http_get(
@@ -142,22 +177,21 @@ def http_get(
         allowed_methods=("GET",),
         raise_on_status=False,  # return the last response so its status can be reported
     )
-    session = requests.Session()
-    for prefix in ("https://", "http://"):
-        session.mount(prefix, HTTPAdapter(max_retries=retry))
-
     secrets = list(secrets)
-    try:
-        response = session.get(
-            url,
-            params=params,
-            headers={"User-Agent": USER_AGENT, **(headers or {})},
-            timeout=TIMEOUT_SECONDS,
-        )
-    except requests.RequestException as err:
-        # `from None`: the original exception's message includes the full URL,
-        # query parameters (and so any API key) included.
-        raise ConnectionError(scrub(f"GET {url} failed: {err}", secrets)) from None
+    with requests.Session() as session:
+        for prefix in ("https://", "http://"):
+            session.mount(prefix, HTTPAdapter(max_retries=retry))
+        try:
+            response = session.get(
+                url,
+                params=params,
+                headers={"User-Agent": USER_AGENT, **(headers or {})},
+                timeout=TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as err:
+            # `from None`: the original exception's message includes the full
+            # URL, query parameters (and so any API key) included.
+            raise ConnectionError(scrub(f"GET {url} failed: {err}", secrets)) from None
     if not response.ok:
         detail = response.text[:300].strip()
         raise ConnectionError(
@@ -189,10 +223,14 @@ def records_frame(payload: Any, path: str | None, *, source: str) -> pd.DataFram
 
 
 def _is_columns(value: Any) -> bool:
+    """An object whose values are equal-length lists of plain values (not records)."""
     if not isinstance(value, dict) or not value:
         return False
     lists = [item for item in value.values() if isinstance(item, list)]
-    return len(lists) == len(value) and len({len(item) for item in lists}) == 1
+    if len(lists) != len(value) or len({len(item) for item in lists}) != 1:
+        return False
+    # {"data": [{...}, {...}]} is a list of records under a key, not a column.
+    return not any(isinstance(cell, dict | list) for column in lists for cell in column)
 
 
 # Snapshots and the manifest
@@ -227,8 +265,17 @@ def ingest_source(source: SourceConfig, raw_dir: Path) -> dict[str, Any]:
     """Fetch one source, save its snapshot, and return its manifest entry."""
     log.info("Fetching %s (type %s)", source.name, source.type)
     frame = FETCHERS[source.type](source)
+    if frame.shape[1] == 0:
+        raise ValueError(f"source '{source.name}' returned no data. Check its url and params")
     if frame.empty:
         log.warning("Source %s returned no rows", source.name)
+    frame, scrubbed = scrub_frame(frame, secrets_in(source))
+    if scrubbed:
+        log.warning(
+            "Source %s echoed a secret (an API key or token) in %d cells. They're saved as ***",
+            source.name,
+            scrubbed,
+        )
 
     path = raw_dir / snapshot_file(source.name)
     frame.to_csv(path, index=False)
@@ -259,13 +306,19 @@ def _selected_sources(cfg: PipelineConfig, only: Iterable[str] | None) -> list[S
                 f"Its sources are: {[source.name for source in sources]}"
             )
         sources = [source for source in sources if source.name in wanted]
-    # Check every type before fetching anything, since some APIs are slow.
+    # Check every type and environment variable before fetching anything, since some APIs are slow.
     for source in sources:
         if source.type not in FETCHERS:
             raise ValueError(
                 f"source '{source.name}' has type '{source.type}', which isn't registered. "
                 f"Types: {', '.join(sorted(FETCHERS))}"
             )
+    missing = sorted({name for s in sources for name in env_names(s) if not os.environ.get(name)})
+    if missing:
+        raise ValueError(
+            f"the sources need environment variables that aren't set: {', '.join(missing)}. "
+            "Add them to .env (see .env.example)"
+        )
     return sources
 
 

@@ -118,25 +118,38 @@ def _client(*, signed: bool):
 
 def _download_gcs(uri: str, dest: Path) -> Path:
     from google.api_core import exceptions
+    from google.auth.exceptions import RefreshError
 
     bucket, key = split_uri(uri)
     log.info("Downloading %s", uri)
+    # Download beside dest and move it into place only once it's complete, so a
+    # failure never leaves a partial or empty file that looks like a good copy.
+    partial = dest.with_name(f"{dest.name}.part")
     try:
         try:
-            _client(signed=False).bucket(bucket).blob(key).download_to_filename(str(dest))
+            _client(signed=False).bucket(bucket).blob(key).download_to_filename(str(partial))
         except (exceptions.Forbidden, exceptions.Unauthorized) as err:
             if not has_gcp_credentials():
                 raise PermissionError(f"{uri} isn't public. Sign in to read it: {SIGN_IN}") from err
             log.info("%s isn't public, so reading it with your Google credentials", uri)
-            _client(signed=True).bucket(bucket).blob(key).download_to_filename(str(dest))
+            _client(signed=True).bucket(bucket).blob(key).download_to_filename(str(partial))
+        partial.replace(dest)
     except exceptions.NotFound as err:
         raise FileNotFoundError(f"{uri} doesn't exist") from err
     except (exceptions.Forbidden, exceptions.Unauthorized) as err:
         raise PermissionError(f"your Google account can't read {uri}") from err
+    except RefreshError as err:
+        raise PermissionError(
+            f"your Google Cloud login has expired. Sign in again: {SIGN_IN}"
+        ) from err
+    finally:
+        partial.unlink(missing_ok=True)
     return dest
 
 
 def _upload_gcs(src: Path, uri: str) -> bool:
+    from google.auth.exceptions import RefreshError
+
     if not has_gcp_credentials():
         log.warning(
             "No Google Cloud credentials, so %s was not uploaded to %s. Run: %s", src, uri, SIGN_IN
@@ -147,6 +160,11 @@ def _upload_gcs(src: Path, uri: str) -> bool:
     # Public objects are cached for up to an hour by default. no-cache makes
     # readers get the new file as soon as it's uploaded.
     blob.cache_control = "no-cache"
-    blob.upload_from_filename(str(src))
+    try:
+        blob.upload_from_filename(str(src))
+    except RefreshError as err:
+        raise PermissionError(
+            f"your Google Cloud login has expired. Sign in again: {SIGN_IN}"
+        ) from err
     log.info("Uploaded %s to %s", src, uri)
     return True

@@ -125,8 +125,19 @@ def load_snapshot(cfg: PipelineConfig, source: SourceConfig) -> pd.DataFrame:
                 f"no snapshot of source '{source.name}' at {path}. Run: make ingest"
             )
         download(join_uri(cfg.ingest.remote_prefix, snapshot_file(source.name)), path)
-    # low_memory=False reads each column's type from the whole file, not chunk by chunk.
-    return pd.read_csv(path, low_memory=False)
+    try:
+        # low_memory=False reads each column's type from the whole file, not chunk by chunk.
+        return pd.read_csv(path, low_memory=False)
+    except pd.errors.EmptyDataError as err:
+        raise ValueError(f"the snapshot of source '{source.name}' at {path} is empty") from err
+
+
+def _checked(result: object, what: str) -> pd.DataFrame:
+    if not isinstance(result, pd.DataFrame):
+        raise TypeError(
+            f"{what} returned {type(result).__name__}, not a DataFrame. Is `return` missing?"
+        )
+    return result
 
 
 def clean_sources(cfg: PipelineConfig) -> dict[str, pd.DataFrame]:
@@ -139,7 +150,7 @@ def clean_sources(cfg: PipelineConfig) -> dict[str, pd.DataFrame]:
                 "%s has no cleaner registered, so it gets only the standard clean", source.name
             )
         else:
-            frame = custom(frame)
+            frame = _checked(custom(frame), f"the cleaner for {source.name}")
         log.info("%s: %d rows x %d columns after cleaning", source.name, len(frame), frame.shape[1])
         frames[source.name] = frame
     return frames
@@ -170,6 +181,14 @@ def join_one(left: pd.DataFrame, right: pd.DataFrame, source: SourceConfig) -> p
                 f"can't join '{source.name}' on '{key}': it's {left[key].dtype} in the table so "
                 f"far but {right[key].dtype} in the source. Convert one of them in a cleaner"
             )
+    # pandas matches missing keys to each other, so a blank key would pick up an
+    # unrelated row. Those rows can't really match anything, so leave them out.
+    blank_keys = right[keys].isna().any(axis=1)
+    if blank_keys.any():
+        log.warning(
+            "%s: leaving out %d rows with a missing %s", source.name, int(blank_keys.sum()), keys
+        )
+        right = right[~blank_keys]
     repeated = right.duplicated(keys)
     if repeated.any():
         raise ValueError(
@@ -191,7 +210,6 @@ def join_one(left: pd.DataFrame, right: pd.DataFrame, source: SourceConfig) -> p
         on=keys,
         how=source.how,
         suffixes=("", f"_{source.name}"),
-        validate="many_to_one",
         indicator="_matched",
     )
     unmatched = int((merged["_matched"] == "left_only").sum())
@@ -216,7 +234,7 @@ def add_features(
 ) -> pd.DataFrame:
     for name in cfg.prepare.feature_steps:
         before = set(table.columns)
-        table = FEATURE_STEPS[name](table, frames)
+        table = _checked(FEATURE_STEPS[name](table, frames), f"feature step {name}")
         log.info(
             "Feature step %s added %s", name, sorted(set(table.columns) - before) or "no columns"
         )

@@ -60,7 +60,11 @@ prepare: ## Data 2/3: clean, join, and add features, writing data.local_path
 push: ## Data 3/3: upload the processed data to data.remote_uri
 	python -m scripts.push_data --config $(CONFIG)
 
-data: ingest prepare push ## Run all three data stages in order
+data: ## Run all three data stages in order
+	@# One after another, even under make -j (prerequisites would run in parallel).
+	@$(MAKE) --no-print-directory ingest
+	@$(MAKE) --no-print-directory prepare
+	@$(MAKE) --no-print-directory push
 
 train: ## Train a model: make train CONFIG=configs/linear.yaml (default: config.yaml)
 	python -m src.train --config $(CONFIG)

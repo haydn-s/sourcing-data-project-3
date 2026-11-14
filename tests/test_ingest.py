@@ -18,8 +18,18 @@ SECRET = "not-a-real-key-1234"
 
 
 class FakeResponse:
-    def __init__(self, payload: Any = None, *, text: str = "", status: int = 200) -> None:
+    def __init__(
+        self,
+        payload: Any = None,
+        *,
+        text: str = "",
+        status: int = 200,
+        content: bytes | None = None,
+        content_type: str = "application/json",
+    ) -> None:
         self.payload, self.text, self.status_code = payload, text, status
+        self.content = text.encode() if content is None else content
+        self.headers = {"Content-Type": content_type}
 
     @property
     def ok(self) -> bool:
@@ -112,7 +122,7 @@ def test_missing_env_var_is_named(tmp_path: Path, http: SimpleNamespace) -> None
         "url": "https://x.org",
         "params": {"key": "${NOPE_KEY}"},
     }
-    with pytest.raises(ValueError, match="needs the environment variable NOPE_KEY"):
+    with pytest.raises(ValueError, match="aren't set: NOPE_KEY"):
         ingest.ingest(pipeline_config(tmp_path, [source]))
 
 
@@ -238,3 +248,85 @@ def test_http_json_columns_become_rows(tmp_path: Path, http: SimpleNamespace) ->
         "time": ["2024-01-01", "2024-01-02"],
         "sunshine_duration": [3600.0, 0.0],
     }
+
+
+def test_csv_without_a_charset_is_read_as_utf8(tmp_path: Path, http: SimpleNamespace) -> None:
+    # requests would decode this as ISO-8859-1 and turn "Québec" into "QuÃ©bec".
+    http.responses["https://x.org/a.csv"] = FakeResponse(
+        content="place,temp\nQuébec,3\n".encode(), content_type="text/csv"
+    )
+    source = {"name": "csv", "type": "http", "url": "https://x.org/a.csv", "format": "csv"}
+
+    ingest.ingest(pipeline_config(tmp_path, [source]))
+
+    assert pd.read_csv(tmp_path / "raw" / "csv.csv")["place"].tolist() == ["Québec"]
+
+
+def test_secrets_echoed_in_records_are_not_saved(
+    tmp_path: Path, http: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TEST_API_KEY", SECRET)
+    http.responses["https://x.org"] = FakeResponse(
+        [{"value": 1, "request": f"https://x.org/?key={SECRET}"}, {"value": 2, "request": None}]
+    )
+    source = {
+        "name": "api",
+        "type": "http",
+        "url": "https://x.org",
+        "params": {"key": "${TEST_API_KEY}"},
+    }
+
+    ingest.ingest(pipeline_config(tmp_path, [source]))
+
+    snapshot = (tmp_path / "raw" / "api.csv").read_text()
+    assert SECRET not in snapshot
+    assert "key=***" in snapshot
+
+
+def test_records_left_unset_on_a_list_under_a_key_is_an_error(
+    tmp_path: Path, http: SimpleNamespace
+) -> None:
+    # The records are under "data", but `records` isn't set.
+    http.responses["https://x.org"] = FakeResponse({"data": [{"a": 1}, {"a": 2}]})
+    source = {"name": "api", "type": "http", "url": "https://x.org"}
+    with pytest.raises(ValueError, match="Set `records`"):
+        ingest.ingest(pipeline_config(tmp_path, [source]))
+
+
+def test_source_with_no_data_is_an_error(tmp_path: Path, http: SimpleNamespace) -> None:
+    http.responses["https://x.org"] = FakeResponse([])
+    source = {"name": "api", "type": "http", "url": "https://x.org"}
+    with pytest.raises(ValueError, match="returned no data"):
+        ingest.ingest(pipeline_config(tmp_path, [source]))
+
+
+def test_missing_env_vars_are_found_before_anything_is_fetched(
+    tmp_path: Path, table_csv: Path, http: SimpleNamespace
+) -> None:
+    sources = [
+        {"name": "table", "type": "file", "uri": str(table_csv)},
+        {
+            "name": "api",
+            "type": "http",
+            "url": "https://x.org",
+            "headers": {"token": "${NOPE_TOKEN}"},
+        },
+    ]
+    with pytest.raises(ValueError, match="NOPE_TOKEN"):
+        ingest.ingest(pipeline_config(tmp_path, sources))
+    assert not (tmp_path / "raw" / "table.csv").exists()
+    assert http.calls == []
+
+
+def test_blank_env_vars_count_as_missing(
+    tmp_path: Path, http: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BLANK_KEY", "")  # e.g. `BLANK_KEY=` left empty in .env
+    source = {
+        "name": "api",
+        "type": "http",
+        "url": "https://x.org",
+        "params": {"key": "${BLANK_KEY}"},
+    }
+    with pytest.raises(ValueError, match="BLANK_KEY"):
+        ingest.ingest(pipeline_config(tmp_path, [source]))
