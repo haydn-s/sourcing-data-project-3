@@ -1,6 +1,6 @@
 # &lt;Project Name&gt;
 
-> 🚧 **Status: framework in place, dataset not chosen.** The pipeline, API, and Docker image are built and run end to end on a synthetic demo dataset ([try it](#0-try-it-on-the-demo-data)). Pointing them at the real dataset is a config change. Sections marked **TODO** get filled in once we pick it at kickoff. The stack is chosen: Google Cloud Storage for the data and models, AWS Lambda for the API, Weights & Biases, FastAPI, and Streamlit. See the [Development Plan](docs/DEVELOPMENT_PLAN.md) for the reasoning and the open decisions.
+> 🚧 **Status: framework in place, dataset not chosen.** The data pipeline, ML pipeline, API, and Docker image are built, and they run end to end on a synthetic demo dataset ([try it](#0-try-it-on-the-demo-data)). Pointing them at the real dataset is a config change. Sections marked **TODO** get filled in once we pick it at kickoff. The stack is chosen: Google Cloud Storage for the data and models, AWS Lambda for the API, Weights & Biases, FastAPI, and Streamlit. See the [Development Plan](docs/DEVELOPMENT_PLAN.md) for the reasoning and the open decisions.
 
 **TODO:** One-sentence pitch: what we predict, for whom, and why it's useful.
 
@@ -9,7 +9,7 @@
 | 🖥️ **Live app** | TODO: `https://<app-name>.streamlit.app` |
 | 🔌 **Prediction API** | TODO: `https://<url-id>.lambda-url.<region>.on.aws/predict` |
 | 📖 **API docs (Swagger UI)** | TODO: `https://<url-id>.lambda-url.<region>.on.aws/docs` |
-| 📈 **Experiment tracking** | TODO: `https://wandb.ai/<entity>/<project>` |
+| 📈 **Experiment tracking** | [wandb.ai/dhs27-duke-university/sourcing-data-project-3](https://wandb.ai/dhs27-duke-university/sourcing-data-project-3) (TODO: the first logged run creates it; then make it public) |
 
 *AIPI 510, Module Project 3 (Data/ML Engineering), Duke University*
 **Due:** Tuesday, November 24, 2026, 11:30 AM EST
@@ -34,6 +34,7 @@
     - [Install](#install)
     - [The PyDev environment](#the-pydev-environment)
     - [Authenticate](#authenticate)
+    - [Set up Cloud Storage (one-time)](#set-up-cloud-storage-one-time)
     - [Set up your .env](#set-up-your-env)
   - [Usage](#usage)
     - [0. Try it on the demo data](#0-try-it-on-the-demo-data)
@@ -88,6 +89,16 @@ flowchart LR
 
 ## Dataset
 
+**Direction.** We're pairing climate and geophysical data with data on something it affects (or that affects it), joined by place and time into one table for one supervised model. The data pipeline takes several sources for that reason. The candidate questions, until we pick one at kickoff:
+
+| Question | Sources | Join on | Example form inputs |
+|---|---|---|---|
+| How climate affects bee colony losses | USDA NASS Honey Bee Colonies (quarterly, by state) + NOAA Climate at a Glance (state temperature and precipitation) | state, quarter | state, quarter, temperature anomaly, precipitation, % colonies with varroa mites |
+| How weather affects flights | BTS On-Time Performance and T-100 route capacity + daily airport weather (NOAA or Open-Meteo) | airport, date | airport, month, high temperature, precipitation, wind |
+| Solar output vs. sunlight | EIA-860 (plant locations) and EIA-923 (monthly generation) + NASA POWER irradiance | plant, month | state, capacity, month, irradiance |
+
+Other sources we looked at, for features or context: GRACE/GRACE-FO ice sheet mass (NASA), the NSIDC Sea Ice Index, Open-Meteo sunshine and daylight duration, USGS earthquakes, and the GEM active faults database. Day length doesn't need a dataset: it follows from latitude and date. Earthquakes and fault lines aren't a climate question (climate doesn't drive them, and their timing can't be predicted), so they'd only enter as features such as distance to the nearest fault.
+
 | | |
 |---|---|
 | **Name** | TODO |
@@ -95,7 +106,7 @@ flowchart LR
 | **License** | TODO (confirm it allows reuse and redistribution) |
 | **Size** | TODO rows × TODO columns |
 | **Target variable** | TODO |
-| **Cloud location** | TODO: `gs://<bucket>/processed/<file>` (publicly readable) |
+| **Cloud location** | `gs://climate-impact-pipeline-data/processed/` TODO: file name (publicly readable) |
 
 **Features used.**
 
@@ -141,6 +152,12 @@ TODO: one paragraph on what worked, what didn't, and where the model fails (see 
 | **Weights & Biases** | Experiment tracking: parameters, metrics, plots, versioned model artifacts |
 | **Streamlit Community Cloud** | Hosts the public front-end, deployed straight from this repo |
 | **GitHub Actions** | CI checks on every pull request (see [CI checks](#ci-checks)) |
+
+**What the public bucket exposes.** Public read applies to this one bucket: anyone can list and download its files. It gives no access to the Google Cloud project, its settings, or the billing account, so no one can see payment details. Three things follow:
+
+- **Anything in the bucket is public**, including file names, so never put `.env` files, keys, or credentials there.
+- **Downloads are billed to us**, not the downloader. The files are small, but keep a budget alert on the billing account.
+- **The trained models are public too**, since they share the bucket. Keeping them private would need a second, private bucket and Google credentials on Lambda.
 
 ## Language Choice: Python vs. Go
 
@@ -269,7 +286,7 @@ That turns the table above into measured numbers. It's listed as a stretch task 
 - `make` (preinstalled on macOS and Linux. On Windows, use WSL or Git Bash)
 - [Node.js](https://nodejs.org/) 22.12+ (`make pr-ready` uses it to run commitlint)
 - [Docker](https://docs.docker.com/get-docker/)
-- The [Google Cloud CLI](https://cloud.google.com/sdk/docs/install) and access to project `climate-impact-pipeline`, to upload data and models. Not needed just to train: the processed data is publicly readable
+- The [Google Cloud CLI](https://cloud.google.com/sdk/docs/install) and access to project `climate-impact-pipeline`, to upload data and models. Not needed just to train: the processed data is publicly readable. Install it with Homebrew (`brew install --cask google-cloud-sdk`) or Google's installer (`curl https://sdk.cloud.google.com | bash`). If `gcloud` then isn't found, open a new terminal or run `source ~/.zshrc`, since the installer only updates new shells
 - The [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) and a login to our AWS account (ask the account owner), to deploy the API to Lambda
 - A [Weights & Biases](https://wandb.ai/) account (W&B is now part of CoreWeave Forge). Students can apply for the free academic plan with a university email. Not needed just to train: set `WANDB_MODE=disabled`
 
@@ -335,6 +352,14 @@ Keeping torch and TensorFlow out of `requirements.txt` keeps the API's Docker im
 wandb login
 ```
 
+Use your own API key, from [wandb.ai/authorize](https://wandb.ai/authorize). Never share one. Runs log to the W&B team `dhs27-duke-university` (`tracking.entity` in `config.yaml`), so everyone who logs runs has to be a team member:
+
+1. Create a W&B account, ideally with your university email (the academic plan is free).
+2. The team admin invites you from the team's settings (role **Member**), and you accept the email invite.
+3. Run `wandb login`.
+
+The first logged run creates the project, `sourcing-data-project-3`. The admin then makes it public in the project's privacy settings, so graders can see the runs.
+
 Sign in to Google Cloud so the pipeline can upload data and models to Cloud Storage. The second command saves Application Default Credentials, which the Python client uses:
 
 ```bash
@@ -364,6 +389,53 @@ aws sts get-caller-identity --profile project3
 ```
 
 The deploy commands in [Usage 5](#5-deploy-the-api-to-aws-lambda) use this profile. With Identity Center, run `aws sso login --profile project3` when your session expires.
+
+### Set up Cloud Storage (one-time)
+
+Already done for our project. These are the steps, for the record or for a fresh project. Project IDs and bucket names are unique across all of Google Cloud.
+
+1. Create the project and make it your default:
+
+    ```bash
+    gcloud projects create climate-impact-pipeline --name="Climate Impact Pipeline"
+    ```
+
+    ```bash
+    gcloud config set project climate-impact-pipeline
+    ```
+
+2. Link a billing account in the [Cloud Console](https://console.cloud.google.com/billing). This is required even for the free tier. Add a budget alert under **Billing → Budgets & alerts** while you're there.
+3. Create the bucket in a free-tier region (`us-east1`, `us-central1`, or `us-west1`), turn on versioning, and allow public access:
+
+    ```bash
+    gcloud storage buckets create gs://climate-impact-pipeline-data --location=us-east1 --uniform-bucket-level-access
+    ```
+
+    ```bash
+    gcloud storage buckets update gs://climate-impact-pipeline-data --versioning --no-public-access-prevention
+    ```
+
+4. Make the bucket publicly readable:
+
+    ```bash
+    gcloud storage buckets add-iam-policy-binding gs://climate-impact-pipeline-data --member=allUsers --role=roles/storage.objectViewer
+    ```
+
+5. Check that files are publicly readable. Upload a test file, fetch it with no login (a `200` means it's public), then delete it:
+
+    ```bash
+    echo ok > check.txt && gcloud storage cp check.txt gs://climate-impact-pipeline-data/check.txt
+    ```
+
+    ```bash
+    curl -I https://storage.googleapis.com/climate-impact-pipeline-data/check.txt
+    ```
+
+    ```bash
+    gcloud storage rm --all-versions gs://climate-impact-pipeline-data/check.txt && rm check.txt
+    ```
+
+Uploads set `Cache-Control: no-cache` on each file, since Google otherwise caches public files for up to an hour and readers would see an old copy.
 
 ### Set up your `.env`
 
@@ -406,6 +478,19 @@ Each is free, and everyone requests their own. In `config.yaml`, a source refers
 | `NOAA_CDO_TOKEN` | NOAA Climate Data Online: weather station records | [ncdc.noaa.gov/cdo-web/token](https://www.ncdc.noaa.gov/cdo-web/token) | `headers: {token: "${NOAA_CDO_TOKEN}"}` |
 | `EIA_API_KEY` | EIA Open Data: power plants, electricity | [eia.gov/opendata/register.php](https://www.eia.gov/opendata/register.php) | `params: {api_key: "${EIA_API_KEY}"}` |
 | `EARTHDATA_TOKEN` | NASA Earthdata: GRACE ice mass (PO.DAAC) | **Generate Token** on your profile at [urs.earthdata.nasa.gov](https://urs.earthdata.nasa.gov) | `headers: {Authorization: "Bearer ${EARTHDATA_TOKEN}"}`. Tokens expire, and some NASA hosts don't take them, so check the dataset's access page |
+
+Details for each:
+
+- **NASS:** agree to the terms of service and enter your email; the key arrives by email. Each query returns at most 50,000 rows, so narrow big pulls by year or state.
+- **NOAA CDO:** enter your email to get a 32-character token. It goes in a `token` header, not a query parameter. Results are capped per request, so long date ranges need paging (a custom source type). NOAA is reworking its data-access site, so if the token page moves, start from [ncei.noaa.gov/cdo-web](https://www.ncei.noaa.gov/cdo-web).
+- **EIA:** fill in the short form; the key arrives by email. If it doesn't, check spam.
+- **Earthdata:** register, then use **Generate Token** on your profile and copy it right away, since it's hidden once you leave the page. You can have two tokens at a time. Under **Applications → Authorized Apps**, approve the data centers you use (PO.DAAC for the ice data). Tokens expire, so make a new one when downloads fail with `401`.
+
+To check which keys your `.env` sets, without printing them:
+
+```bash
+python -c "from dotenv import dotenv_values; v = dotenv_values('.env'); print({k: bool(v.get(k)) for k in ['NASS_API_KEY', 'NOAA_CDO_TOKEN', 'EIA_API_KEY', 'EARTHDATA_TOKEN']})"
+```
 
 These sources need no key: Open-Meteo (sunshine and weather), NASA POWER (solar irradiance), NOAA Climate at a Glance (state climate), the USGS earthquake catalog, the NSIDC Sea Ice Index, BTS flight data, and the GEM active faults database.
 
@@ -469,6 +554,12 @@ make push
 2. **Prepare** ([`data_pipeline/prepare.py`](data_pipeline/prepare.py)) cleans each snapshot, joins the sources on their `join_on` columns, runs the feature steps in `prepare.feature_steps`, and writes `data.local_path`. Every source gets a standard clean (snake_case columns, trimmed text, no empty or duplicate rows). Its own cleaner, and the feature steps, are functions registered in the same file. The joins check for the usual mistakes: missing keys, mismatched key types, and keys that would duplicate rows.
 3. **Push** ([`data_pipeline/push.py`](data_pipeline/push.py)) uploads the processed table to `data.remote_uri`. It refuses a table that lacks the config's features or target, since training on it would fail.
 
+**Why keep raw snapshots.** Public data sources move. In 2026 NOAA's NCEI is retiring some download services, and NSIDC's Sea Ice Index has dropped to basic support. With every source's raw rows saved in the bucket, `make prepare` can rebuild the processed table without calling the APIs again. It downloads any snapshot that's missing locally.
+
+**Which features belong where.** The API gets one row of inputs from the front-end, so a feature computed in `prepare` has to be something the front-end can supply or look up too. Transforms of a row's own inputs (ratios, logs, date parts) belong in [`ml_pipeline/features.py`](ml_pipeline/features.py), where they become part of the saved model and the API applies them for you. And measure anomalies against a fixed baseline period, not the whole table, so the test years don't leak into training.
+
+**Leading zeros.** Snapshots are CSV, so codes like state FIPS `01` or ZIP codes come back as numbers. Restore them in the source's cleaner, e.g. `frame["fips"].astype(str).str.zfill(2)`.
+
 The ML pipeline then downloads `data.remote_uri` with [`ml_pipeline/data.py`](ml_pipeline/data.py). Because the bucket is publicly readable, that needs no Google login. The file is also at `https://storage.googleapis.com/climate-impact-pipeline-data/processed/<file>`.
 
 ### 2. Train the model
@@ -477,7 +568,7 @@ The ML pipeline then downloads `data.remote_uri` with [`ml_pipeline/data.py`](ml
 make train
 ```
 
-That runs `python -m ml_pipeline.train --config config.yaml`. It downloads the processed data from cloud storage (when `data.remote_uri` is set), splits it, trains, evaluates on the validation and test sets, logs everything to W&B, and saves the model pipeline locally and, when `output.remote_prefix` is set, to `gs://climate-impact-pipeline-data/models/`.
+That runs `python -m ml_pipeline.train --config config.yaml`. It downloads the processed data from cloud storage (when `data.remote_uri` is set), splits it, trains, evaluates on the validation and test sets, logs everything to W&B, and saves the model pipeline locally and, when `output.remote_prefix` is set, to `gs://climate-impact-pipeline-data/models/`. It's `null` for now on purpose: while `config.yaml` trains the demo data, uploading would put demo models in `models/latest/`, which is what the deployed API serves. Set it once the config trains the real dataset.
 
 Each run writes `models/<run-id>/` and copies it to `models/latest/`:
 
@@ -696,6 +787,7 @@ TODO: fill this in once we choose the dataset. Questions to answer:
 - **Intended use & misuse:** What decisions should this model *not* be used for? What happens when a prediction is wrong, and who bears the cost?
 - **Limitations:** Dataset age, distribution shift, small sample sizes, metric trade-offs, features we couldn't capture.
 - **Privacy:** Does the dataset contain personal information? Does the API log user inputs?
+- **Redistribution:** Our public bucket republishes each source's raw rows. Confirm each license allows that, and credit every source (see [License & Acknowledgments](#license--acknowledgments)).
 - **Transparency in the UI:** The front-end shows a confidence score and a short disclaimer, so users don't over-trust the output.
 
 ## Contributing
