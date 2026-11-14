@@ -1,14 +1,14 @@
 # &lt;Project Name&gt;
 
-> 🚧 **Status: planning.** We haven't picked the dataset or the problem yet; we'll decide at kickoff. Sections marked **TODO** get filled in as we build. The stack described here is our *proposed default*; see the [Development Plan](docs/DEVELOPMENT_PLAN.md) for the reasoning and the open decisions.
+> 🚧 **Status: framework in place, dataset not chosen.** The pipeline, API, and Docker image are built and run end to end on a synthetic demo dataset ([try it](#0-try-it-on-the-demo-data)). Pointing them at the real dataset is a config change. Sections marked **TODO** get filled in once we pick it at kickoff. The stack is chosen: AWS (S3 and Lambda), Weights & Biases, FastAPI, and Streamlit. See the [Development Plan](docs/DEVELOPMENT_PLAN.md) for the reasoning and the open decisions.
 
 **TODO:** One-sentence pitch: what we predict, for whom, and why it's useful.
 
 | | |
 |---|---|
 | 🖥️ **Live app** | TODO: `https://<app-name>.streamlit.app` |
-| 🔌 **Prediction API** | TODO: `https://<api-host>/predict` |
-| 📖 **API docs (Swagger UI)** | TODO: `https://<api-host>/docs` |
+| 🔌 **Prediction API** | TODO: `https://<url-id>.lambda-url.<region>.on.aws/predict` |
+| 📖 **API docs (Swagger UI)** | TODO: `https://<url-id>.lambda-url.<region>.on.aws/docs` |
 | 📈 **Experiment tracking** | TODO: `https://wandb.ai/<entity>/<project>` |
 
 *AIPI 510, Module Project 3 (Data/ML Engineering), Duke University*
@@ -36,11 +36,12 @@
     - [Authenticate](#authenticate)
     - [Environment variables](#environment-variables)
   - [Usage](#usage)
+    - [0. Try it on the demo data](#0-try-it-on-the-demo-data)
     - [1. Upload the cleaned dataset to the cloud (one-time)](#1-upload-the-cleaned-dataset-to-the-cloud-one-time)
     - [2. Train the model](#2-train-the-model)
     - [3. Run the API locally](#3-run-the-api-locally)
     - [4. Run everything with Docker](#4-run-everything-with-docker)
-    - [5. Deploy the API to the cloud](#5-deploy-the-api-to-the-cloud)
+    - [5. Deploy the API to AWS Lambda](#5-deploy-the-api-to-aws-lambda)
     - [6. Run and deploy the front-end](#6-run-and-deploy-the-front-end)
   - [Configuration](#configuration)
   - [API Reference](#api-reference)
@@ -67,7 +68,7 @@
 - Train a model with a **config-driven, reproducible pipeline** that pulls data from the cloud
 - **Track experiments** (parameters, metrics, plots, model artifacts)
 - **Containerize** training and serving in a single Docker image
-- Serve predictions from a **FastAPI `/predict` endpoint deployed to a public cloud platform** (TODO: provider)
+- Serve predictions from a **FastAPI `/predict` endpoint deployed to AWS Lambda** at a public HTTPS URL
 - Ship a **public front-end** that calls the live API and presents its predictions in a clear, interactive way
 
 **Non-goal.** State-of-the-art accuracy. This project is about engineering and MLOps practice. We keep the model simple on purpose.
@@ -76,12 +77,12 @@
 
 ```mermaid
 flowchart LR
-    SRC[Public dataset<br/>Kaggle / UCI / HF] -->|scripts/upload_data.py<br/>clean + upload| STORED[(Cloud storage · TBD<br/>processed data)]
+    SRC[Public dataset<br/>Kaggle / UCI / HF] -->|scripts/upload_data.py<br/>clean + upload| STORED[(Amazon S3<br/>data/processed/ · public read)]
     STORED -->|src/data.py<br/>download| TRAIN[Training pipeline<br/>src/train.py + config.yaml]
     TRAIN -->|params · metrics · plots| WB[Weights & Biases]
-    TRAIN -->|model.joblib| STOREM[(Cloud storage · TBD<br/>model artifacts)]
-    STOREM -->|loaded at startup| API[FastAPI /predict<br/>Docker on cloud platform · TBD]
-    UI[Streamlit front-end<br/>Streamlit Community Cloud] -->|HTTP POST JSON| API
+    TRAIN -->|model.joblib| STOREM[(Amazon S3<br/>models/ · private)]
+    STOREM -->|loaded at startup<br/>IAM role| API[FastAPI /predict<br/>Docker image on AWS Lambda]
+    UI[Streamlit front-end<br/>Streamlit Community Cloud] -->|HTTP POST JSON<br/>Function URL| API
     USER((User)) --> UI
 ```
 
@@ -94,7 +95,7 @@ flowchart LR
 | **License** | TODO (confirm it allows reuse and redistribution) |
 | **Size** | TODO rows × TODO columns |
 | **Target variable** | TODO |
-| **Cloud location** | TODO: `<cloud-storage-uri>/data/processed/<file>` |
+| **Cloud location** | TODO: `s3://<bucket>/data/processed/<file>` (publicly readable) |
 
 **Features used.**
 
@@ -119,7 +120,7 @@ flowchart LR
 
 **Model.** TODO, e.g. a scikit-learn `Pipeline` with a `ColumnTransformer` (imputation + scaling + one-hot encoding) feeding a `RandomForestClassifier`. The full preprocessing + model pipeline is serialized as one artifact, so the API applies exactly the same transforms as training.
 
-**Hyperparameters.** All hyperparameters are set in [`config.yaml`](config.yaml) and logged to the experiment tracker on every run.
+**Hyperparameters.** All hyperparameters are set in [`config.yaml`](config.yaml) (or a variant in [`configs/`](configs/)) and logged to W&B on every run. See [Configuration](#configuration).
 
 **Results.**
 
@@ -134,8 +135,9 @@ TODO: one paragraph on what worked, what didn't, and where the model fails (see 
 
 | Service | Purpose |
 |---|---|
-| **TODO: cloud storage** | Hosts the cleaned dataset and trained model artifacts |
-| **TODO: API hosting** | Runs the containerized FastAPI service at a public HTTPS URL |
+| **Amazon S3** | Hosts the cleaned dataset (publicly readable) and the trained model artifacts (private). Versioning is on |
+| **Amazon ECR** | Stores the Docker image that Lambda runs |
+| **AWS Lambda** | Runs the containerized FastAPI service at a public HTTPS Function URL, through the [AWS Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter). Scales to zero when idle. Reads the model from S3 through its IAM role, so it stores no AWS keys |
 | **Weights & Biases** | Experiment tracking: parameters, metrics, plots, versioned model artifacts |
 | **Streamlit Community Cloud** | Hosts the public front-end, deployed straight from this repo |
 | **GitHub Actions** | CI checks on every pull request (see [CI checks](#ci-checks)) |
@@ -202,19 +204,19 @@ That turns the table above into measured numbers. It's listed as a stretch task 
 
 ## Project Structure
 
-> Proposed layout. We'll update it as the code lands.
-
 ```
 .
-├── config.yaml              # All pipeline parameters (data paths, features, split, model, tracking)
-├── requirements.txt         # Pipeline + API runtime dependencies (pinned; used by Docker and CI)
-├── requirements-dev.txt     # Dev tooling: pre-commit, pytest
-├── requirements-pydev.txt   # PyDev environment: data science + deep learning stack (local only)
+├── config.yaml              # All pipeline parameters: data, features, split, model, metric, tracking
+├── configs/                 # Experiment variants that extend config.yaml (baseline, linear, ...)
+├── requirements.txt         # Pipeline + API runtime dependencies (pinned; used by Docker, CI, PyDev)
+├── requirements-dev.txt     # Dev tooling: pre-commit, pytest, httpx2
+├── requirements-pydev.txt   # PyDev environment: adds notebooks and deep learning (local only)
 ├── pyproject.toml           # Shared code style (ruff) and pytest settings
-├── Makefile                 # Dev commands: make venv, setup, format, lint, test, pr-ready
-├── Dockerfile               # One image with `train` and `serve` entry points
-├── entrypoint.sh            # Dispatches `train` | `serve`
-├── .env.example             # Required environment variables (no secrets committed)
+├── Makefile                 # Dev commands: make venv, setup, train, serve, docker-smoke, pr-ready
+├── Dockerfile               # One image with `train` and `serve` entry points. Also runs on Lambda
+├── entrypoint.sh            # Dispatches `train` | `serve` | any other command
+├── .dockerignore            # Keeps data, models, secrets, and PyDev out of the image
+├── .env.example             # Environment variables to copy into .env (no secrets committed)
 ├── .commitlintrc.yaml       # Commit message rules (Conventional Commits)
 ├── .pre-commit-config.yaml  # Local git hooks: commitlint, gitleaks, ruff, file checks
 ├── .github/
@@ -224,24 +226,28 @@ That turns the table above into measured numbers. It's listed as a stretch task 
 │   ├── dependabot.yml       # Weekly dependency update PRs
 │   └── pull_request_template.md
 ├── scripts/
-│   └── upload_data.py       # One-time: download raw data → clean → upload to cloud storage
+│   ├── upload_data.py       # One-time: raw data → clean → upload to S3
+│   └── docker_smoke_test.sh # Trains and serves inside the image (make docker-smoke, CI)
 ├── src/
-│   ├── config.py            # Load + validate config.yaml
-│   ├── data.py              # Download processed data from cloud storage
-│   ├── features.py          # Preprocessing / feature engineering (sklearn ColumnTransformer)
-│   ├── train.py             # Entry point: split → train → evaluate → log → save model
-│   └── evaluate.py          # Metrics + plots
+│   ├── config.py            # Load + validate config files (extends:, --set overrides)
+│   ├── storage.py           # Copy files to and from S3 (anonymous reads without credentials)
+│   ├── data.py              # Load the processed data, train/validation/test split
+│   ├── features.py          # Preprocessing (sklearn ColumnTransformer)
+│   ├── models.py            # model.type → scikit-learn estimator
+│   ├── evaluate.py          # Metrics + plots
+│   ├── tracking.py          # W&B logging
+│   ├── train.py             # Entry point: load → split → train → evaluate → log → save
+│   └── demo_data.py         # Synthetic dataset for trying the pipeline before we pick one
 ├── api/
-│   ├── main.py              # FastAPI app: /health, /predict
-│   └── schemas.py           # Pydantic request/response models
-├── frontend/
+│   ├── main.py              # FastAPI app: /health, /metadata, /predict
+│   └── schemas.py           # Response models. The request model is built from the model's metadata
+├── frontend/                # Planned (task B5)
 │   ├── app.py               # Streamlit UI that calls the deployed API
 │   └── requirements.txt     # Front-end-only dependencies (used by Streamlit Cloud)
 ├── tests/
-│   ├── test_api.py
-│   ├── test_features.py
+│   ├── test_*.py            # config, features, models, storage, train, API, upload_data
 │   └── sample_request.json  # Example payload for curl / Postman
-├── notebooks/
+├── notebooks/               # Planned (task A1)
 │   └── eda.ipynb            # Exploration only; the pipeline never depends on notebooks
 └── docs/
     └── DEVELOPMENT_PLAN.md
@@ -255,8 +261,8 @@ That turns the table above into measured numbers. It's listed as a stretch task 
 - `make` (preinstalled on macOS and Linux. On Windows, use WSL or Git Bash)
 - [Node.js](https://nodejs.org/) 22.12+ (`make pr-ready` uses it to run commitlint)
 - [Docker](https://docs.docker.com/get-docker/)
-- TODO: access to our cloud provider (and its CLI, if needed)
-- A [Weights & Biases](https://wandb.ai/) account
+- The [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) and a login to our AWS account (ask the account owner). Not needed just to train: the processed data is publicly readable
+- A [Weights & Biases](https://wandb.ai/) account (W&B is now part of CoreWeave Forge). Students can apply for the free academic plan with a university email. Not needed just to train: set `WANDB_MODE=disabled`
 
 ### Install
 
@@ -282,7 +288,7 @@ pre-commit install
 
 ### The PyDev environment
 
-PyDev is our shared local environment for data science and deep learning work (Python 3.12). It's defined in [`requirements-pydev.txt`](requirements-pydev.txt), with every version pinned:
+PyDev is our shared local environment for data science and deep learning work (Python 3.12). It's defined in [`requirements-pydev.txt`](requirements-pydev.txt), which includes [`requirements.txt`](requirements.txt) (the pipeline and API, plus boto3, FastAPI, and Uvicorn), with every version pinned:
 
 | Area | Libraries |
 |---|---|
@@ -292,7 +298,8 @@ PyDev is our shared local environment for data science and deep learning work (P
 | Visualization | matplotlib, seaborn, plotly, shap |
 | Notebooks | jupyterlab, ipykernel, ipywidgets |
 | Tracking and utilities | wandb, pyyaml, python-dotenv, tqdm |
-| Dev tooling | pre-commit, pytest (from `requirements-dev.txt`) |
+| Pipeline and serving | boto3, FastAPI, Uvicorn, pydantic (from `requirements.txt`) |
+| Dev tooling | pre-commit, pytest, httpx2 (from `requirements-dev.txt`) |
 
 To use PyDev from Jupyter or VS Code notebooks, register it as a kernel once:
 
@@ -306,12 +313,12 @@ python -m ipykernel install --user --name PyDev
 
 | File | Installed by | Contents |
 |---|---|---|
-| `requirements.txt` | Docker image, CI | Runtime dependencies for the pipeline and API (added with the code) |
-| `requirements-dev.txt` | CI, PyDev | pre-commit, pytest |
-| `requirements-pydev.txt` | PyDev (local only) | The data science and deep learning stack above, plus dev tooling |
+| `requirements.txt` | Docker image, CI, PyDev | Runtime dependencies for the pipeline and API |
+| `requirements-dev.txt` | CI, PyDev | pre-commit, pytest, httpx2 |
+| `requirements-pydev.txt` | PyDev (local only) | Both files above, plus notebooks, extra plotting, and deep learning |
 | `frontend/requirements.txt` | Streamlit Community Cloud | Front-end only (added with the front-end) |
 
-Keeping torch and TensorFlow out of `requirements.txt` keeps the API's Docker image and CI runs small. When `requirements.txt` lands, PyDev will include it, and shared pins such as scikit-learn must match: a model saved with one scikit-learn version may not load in another.
+Keeping torch and TensorFlow out of `requirements.txt` keeps the API's Docker image and CI runs small. Shared packages are pinned only in `requirements.txt`, so PyDev and the image always match. That matters most for scikit-learn: a model saved with one version may not load in another, and the API logs a warning when they differ.
 
 ### Authenticate
 
@@ -319,7 +326,23 @@ Keeping torch and TensorFlow out of `requirements.txt` keeps the API's Docker im
 wandb login
 ```
 
-TODO: add the login step for our cloud provider so local code can read and write cloud storage.
+Set up an AWS CLI profile so local code can read and write S3. Use the first command if the account uses IAM Identity Center, or the second if you have an IAM user's access keys:
+
+```bash
+aws configure sso --profile project3
+```
+
+```bash
+aws configure --profile project3
+```
+
+Check which account and role you're signed in as:
+
+```bash
+aws sts get-caller-identity --profile project3
+```
+
+Then set `AWS_PROFILE=project3` in `.env`. With Identity Center, run `aws sso login --profile project3` when your session expires.
 
 ### Environment variables
 
@@ -327,32 +350,87 @@ Non-secret settings live in `config.yaml`. Secrets and deployment-specific value
 
 | Variable | Used by | Description |
 |---|---|---|
-| TODO | pipeline, API | Cloud storage location and credentials (depends on provider) |
+| `AWS_PROFILE` | pipeline | AWS CLI profile with access to our S3 bucket (see [Authenticate](#authenticate)). Lambda doesn't need it: it uses its IAM role |
+| `AWS_REGION` | pipeline, API | Region of our bucket, e.g. `us-east-1`. Lambda sets it automatically |
 | `WANDB_API_KEY` | pipeline | W&B API key (or run `wandb login`) |
-| `MODEL_URI` | API | Model location: a cloud storage URI or a local path |
-| `API_URL` | front-end | Base URL of the deployed API |
+| `WANDB_MODE` | pipeline | Optional. `offline` or `disabled` lets you train without a W&B account |
+| `MODEL_URI` | API | Model location: `s3://<bucket>/models/latest/model.joblib` or a local path (default: `models/latest/model.joblib`) |
+| `MODEL_CACHE_DIR` | API | Optional. Where an S3 model is downloaded (default: a folder in `/tmp`, the only writable path on Lambda) |
+| `API_URL` | front-end | Base URL of the deployed API (the Lambda Function URL) |
 
 ## Usage
+
+Run these from the repo root, inside PyDev (`source PyDev/bin/activate`).
+
+### 0. Try it on the demo data
+
+Until we pick a dataset, `config.yaml` points at a synthetic customer-churn dataset (made-up rows, no real people). This runs the whole pipeline locally, with no AWS or W&B account:
+
+```bash
+make demo-data
+```
+
+```bash
+WANDB_MODE=disabled make train
+```
+
+```bash
+make serve
+```
+
+Then open <http://localhost:8080/docs>, or send the sample request from another terminal:
+
+```bash
+curl -X POST http://localhost:8080/predict -H "Content-Type: application/json" -d @tests/sample_request.json
+```
 
 ### 1. Upload the cleaned dataset to the cloud (one-time)
 
 ```bash
-python scripts/upload_data.py --config config.yaml
+python -m scripts.upload_data --config config.yaml --raw <path-or-url-of-raw-data>
 ```
+
+This reads the raw data (local path, URL, or `s3://`), cleans it with `clean()` in [`scripts/upload_data.py`](scripts/upload_data.py) (a placeholder until we pick the dataset), writes it to `data.local_path`, and uploads it to `data.remote_uri`.
 
 ### 2. Train the model
 
 ```bash
-python -m src.train --config config.yaml
+make train
 ```
 
-This downloads the processed data from cloud storage, splits it, trains, evaluates on the validation and test sets, logs everything to W&B, and saves the model pipeline locally and to cloud storage under `models/`. To run an experiment, edit `config.yaml` (or copy it, e.g. `configs/rf_deep.yaml`) and re-run.
+That runs `python -m src.train --config config.yaml`. It downloads the processed data from S3 (when `data.remote_uri` is set), splits it, trains, evaluates on the validation and test sets, logs everything to W&B, and saves the model pipeline locally and to S3 under `models/`.
+
+Each run writes `models/<run-id>/` and copies it to `models/latest/`:
+
+| File | Contents |
+|---|---|
+| `model.joblib` | The fitted scikit-learn pipeline: preprocessing plus model |
+| `metadata.json` | Run ID, metrics, features (with ranges and categories), class labels, data hash, library versions, and the full config. The API builds its request schema from this file |
+| `plots/` | Confusion matrix (classification) or predicted-vs-actual and residuals (regression), plus feature importance |
+
+**Experiments.** Train a variant from [`configs/`](configs/), or override single values:
+
+```bash
+make train CONFIG=configs/baseline.yaml
+```
+
+```bash
+python -m src.train --config config.yaml --set model.params.max_depth=5 --set split.test_size=0.2
+```
+
+**Without our accounts.** Training still runs without AWS credentials (the processed data is public, and the model is saved locally only) or a W&B account:
+
+```bash
+WANDB_MODE=disabled make train
+```
 
 ### 3. Run the API locally
 
 ```bash
-MODEL_URI=models/model.joblib uvicorn api.main:app --reload --port 8080
+make serve
 ```
+
+That runs `uvicorn api.main:create_app --factory --reload --port 8080`, serving `models/latest/model.joblib`. Set `MODEL_URI` to serve another model, including one in S3. The app is created by a factory because its request schema comes from the model it loads.
 
 ```bash
 curl http://localhost:8080/health
@@ -368,37 +446,80 @@ Interactive docs: <http://localhost:8080/docs>
 
 ### 4. Run everything with Docker
 
+Build the image. `make docker-build` builds for `linux/amd64` without attestations, which is what Lambda needs, so the same image runs locally and in the cloud:
+
 ```bash
-docker build -t project3 .
+make docker-build
 ```
 
-Train inside the container, passing credentials through `.env`:
+The container reads your AWS login from your mounted `~/.aws` folder, and `AWS_PROFILE` in `.env` picks the profile. Mounting `data/` and `models/` keeps the data and trained models on your machine.
+
+Train inside the container (arguments after `train` go to `src.train`):
 
 ```bash
-docker run --rm --env-file .env project3 train
+docker run --rm --env-file .env -v "$HOME/.aws:/root/.aws" -v "$PWD/data:/app/data" -v "$PWD/models:/app/models" project3 train
 ```
 
 Serve the API (the default command) on port 8080:
 
 ```bash
-docker run --rm -p 8080:8080 --env-file .env project3 serve
+docker run --rm -p 8080:8080 --env-file .env -v "$HOME/.aws:/root/.aws" -v "$PWD/models:/app/models" project3
 ```
 
-TODO: document how the container gets cloud storage credentials once the provider is chosen.
-
-### 5. Deploy the API to the cloud
-
-TODO: fill in once we choose the platform. The steps will be:
-
-1. Build the image for `linux/amd64`. Most cloud platforms run `amd64`, so on an Apple Silicon Mac use `docker buildx build --platform linux/amd64 ...`.
-2. Push the image to the provider's container registry.
-3. Deploy it as a public HTTPS service, with `MODEL_URI` pointing at the trained model in cloud storage.
-4. Give the service read access to the model in cloud storage.
-
-Confirm the deployed endpoint works:
+**Smoke test.** This builds the image, generates the demo data and trains inside it, then serves the model the way Lambda runs it (a non-root user and a read-only filesystem except `/tmp`) and calls `/health` and `/predict`. CI runs it on every PR:
 
 ```bash
-curl -X POST https://<api-host>/predict \
+make docker-smoke
+```
+
+### 5. Deploy the API to AWS Lambda
+
+> Planned steps. We'll confirm the exact commands during task B4.
+
+Set a few shell variables first, replacing the region if needed:
+
+```bash
+export AWS_PROFILE=project3 AWS_REGION=us-east-1 FUNCTION=project3-api REPO=project3-api
+export REGISTRY="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com"
+export IMAGE="$REGISTRY/$REPO:latest"
+```
+
+**1. Build the image.** Lambda accepts only a single-platform image without buildx's default attestations, so build it this way on every machine, Apple Silicon included:
+
+```bash
+make docker-build IMAGE="$IMAGE"
+```
+
+**2. Push it to ECR.** Create the repository the first time only:
+
+```bash
+aws ecr create-repository --repository-name "$REPO"
+```
+
+Then sign Docker in to ECR and push:
+
+```bash
+aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
+docker push "$IMAGE"
+```
+
+**3. Create the function (first time only).** In the Lambda console, choose **Create function → Container image**, pick the image, and set the architecture to **x86_64**. Then, under **Configuration**:
+
+- **General configuration:** memory 2048 MB, timeout 30 seconds
+- **Environment variables:** `MODEL_URI=s3://<bucket>/models/latest/model.joblib`
+- **Permissions:** open the execution role and add a policy that allows `s3:GetObject` on `arn:aws:s3:::<bucket>/models/*`
+- **Function URL:** create one with auth type **NONE**. The console adds both permissions a public URL needs (`lambda:InvokeFunctionUrl` and `lambda:InvokeFunction`)
+
+**4. Deploy later changes.** Rebuild and push (steps 1 and 2), then point the function at the new image:
+
+```bash
+aws lambda update-function-code --function-name "$FUNCTION" --image-uri "$IMAGE"
+```
+
+Confirm the deployed endpoint works. The first request after the function sits idle takes a few extra seconds (a cold start):
+
+```bash
+curl -X POST https://<url-id>.lambda-url.<region>.on.aws/predict \
   -H "Content-Type: application/json" \
   -d @tests/sample_request.json
 ```
@@ -415,63 +536,74 @@ API_URL=http://localhost:8080 streamlit run frontend/app.py
 Deploy on [Streamlit Community Cloud](https://share.streamlit.io/): **New app** → this repo → branch `main` → main file `frontend/app.py`. Then under **Advanced settings → Secrets**, add:
 
 ```toml
-API_URL = "https://<api-host>"
+API_URL = "https://<url-id>.lambda-url.<region>.on.aws"
 ```
 
 ## Configuration
 
-Every pipeline parameter lives in [`config.yaml`](config.yaml). Proposed shape:
+Every pipeline parameter lives in [`config.yaml`](config.yaml), which documents each setting inline. The code holds nothing dataset-specific. Configs are validated when they load, so a typo or an impossible setting (a metric that doesn't fit the task, split sizes that leave no training rows) fails with a clear message before training starts.
 
-```yaml
-seed: 42
-data:
-  remote_uri: <cloud-storage-uri>/data/processed/<file>.csv   # provider TBD
-  local_path: data/processed/<file>.csv
-  target: <target_column>
-features:
-  numeric: [<col_a>, <col_b>]
-  categorical: [<col_c>]
-split:
-  test_size: 0.15
-  val_size: 0.15
-  stratify: true
-model:
-  type: random_forest            # e.g. logistic_regression | random_forest | xgboost
-  params:
-    n_estimators: 200
-    max_depth: 10
-tracking:
-  project: <wandb-project>
-  entity: <wandb-entity>
-output:
-  local_dir: models/
-  remote_prefix: <cloud-storage-uri>/models/
-```
+| Section | What it controls |
+|---|---|
+| `seed` | Random seed for the split and the model |
+| `task` | `classification` or `regression` |
+| `data` | Where the processed data lives (`remote_uri` in S3, cached at `local_path`) and the `target` column |
+| `features` | The `numeric` and `categorical` columns to use. Other columns are ignored |
+| `split` | Test and validation fractions (of the whole dataset), and stratification for classification |
+| `model` | `type` (below) and `params`, passed straight to the scikit-learn estimator |
+| `evaluation` | `primary_metric`: `accuracy`, `f1` (macro), or `roc_auc` for classification; `rmse`, `mae`, or `r2` for regression |
+| `tracking` | W&B `project`, `entity` (team), and `tags` |
+| `output` | Local model folder and the S3 prefix to upload models to |
+
+**Model types.** Each type works for both tasks, so switching tasks doesn't mean renaming the model. Add more in [`src/models.py`](src/models.py).
+
+| `model.type` | Classification | Regression |
+|---|---|---|
+| `dummy` | `DummyClassifier` (most common class) | `DummyRegressor` (mean) |
+| `linear` | `LogisticRegression` | `Ridge` |
+| `random_forest` | `RandomForestClassifier` | `RandomForestRegressor` |
+| `hist_gradient_boosting` | `HistGradientBoostingClassifier` | `HistGradientBoostingRegressor` |
+| `xgboost` | `XGBClassifier` | `XGBRegressor` (needs xgboost in `requirements.txt` first) |
+
+**Variants.** A file in [`configs/`](configs/) starts with `extends: ../config.yaml` and lists only what changes. Sections merge key by key, except `model.params`, which is replaced as a whole so each variant lists exactly the hyperparameters it uses. `--set key.path=value` overrides a single value from the command line. Values are read as YAML, so `5`, `true`, and `[a, b]` work.
+
+**Switching to the real dataset:**
+
+1. Write `clean()` in [`scripts/upload_data.py`](scripts/upload_data.py) and run it ([Usage 1](#1-upload-the-cleaned-dataset-to-the-cloud-one-time)).
+2. In `config.yaml`, set `task`, the `data` section, `features`, and `evaluation.primary_metric`. Update `tracking.tags`.
+3. Replace [`tests/sample_request.json`](tests/sample_request.json) with a real record. The API tests and the Docker smoke test send it.
+4. Delete `src/demo_data.py` and the `demo-data` make target once nothing uses them.
 
 ## API Reference
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | Liveness check; returns model version |
+| `GET` | `/health` | Liveness check; returns model version. Lambda's readiness check calls it too |
+| `GET` | `/metadata` | The model's features (numeric ranges, allowed categories), class labels, test metrics, and an example request. The front-end can build its form from this |
 | `POST` | `/predict` | Returns a prediction for one input record |
-| `GET` | `/docs` | Auto-generated Swagger UI |
+| `GET` | `/docs` | Auto-generated Swagger UI (`/` redirects here) |
 
-**Example request** (TODO: replace with real features):
+The `/predict` request schema is generated from the served model's `metadata.json`, so it always matches the model: one field per feature, categorical fields limited to the categories seen in training, and unknown fields rejected. Invalid requests get a `422` that says which field is wrong.
+
+**Example request** (the demo dataset; TODO: replace with real features):
 
 ```json
 {
-  "feature_a": 3.2,
-  "feature_b": "category_x"
+  "age": 34,
+  "monthly_spend": 49.5,
+  "support_calls": 3,
+  "region": "south",
+  "plan": "standard"
 }
 ```
 
-**Example response:**
+**Example response.** `probability` is the predicted class's probability (`null` for regression), and `model_version` is the W&B run ID:
 
 ```json
 {
-  "prediction": "TODO",
-  "probability": 0.82,
-  "model_version": "TODO (e.g. W&B run ID)"
+  "prediction": "yes",
+  "probability": 0.79,
+  "model_version": "nmbwlftk"
 }
 ```
 
@@ -540,6 +672,11 @@ Passing locally means CI should pass too. The one check CI adds is a gitleaks sc
 | `make format` | Auto-fix formatting and lint issues in all files |
 | `make lint` | Run every pre-commit hook on all files |
 | `make test` | Run the tests |
+| `make demo-data` | Generate the synthetic demo dataset |
+| `make train CONFIG=...` | Train a model (default: `config.yaml`) |
+| `make serve` | Run the API locally with auto-reload |
+| `make docker-build` | Build the image for Lambda (`linux/amd64`) |
+| `make docker-smoke` | Build the image, train and serve inside it, and call the API |
 | `make lint-commits` | Lint the commit messages on your branch |
 | `make lint-title PR_TITLE="..."` | Lint a PR title |
 | `make pr-ready` | Everything above, before you open a PR |
@@ -553,10 +690,11 @@ Passing locally means CI should pass too. The one check CI adds is a gitleaks sc
 | **Commit messages & PR title** | commitlint on each commit in the PR and on the PR title |
 | **Secret scan (gitleaks)** | Scans every commit in the PR for API keys, tokens, and private keys |
 | **Lint (pre-commit hooks)** | `make lint`: file checks (large files, whitespace, YAML/JSON/TOML syntax) plus ruff lint and format |
-| **Tests (pytest)** | `make test` (passes with a notice until the first tests exist) |
+| **Tests (pytest)** | `make test`: config validation, preprocessing, models, storage, training end to end, and the API |
+| **Docker image (build + smoke test)** | `make docker-smoke`: builds the image, trains on the demo data inside it, and calls the API under Lambda-like conditions |
 | **CI passed** | Gate job that succeeds only if every job above passed or was skipped. Branch protection requires this one check |
 
-To add a check, add a job to `ci.yml` and list it under `ci-passed.needs`. Branch protection doesn't need to change. Planned additions: a Docker build check once the `Dockerfile` lands, and deployment on merge once we pick a cloud platform.
+To add a check, add a job to `ci.yml` and list it under `ci-passed.needs`. Branch protection doesn't need to change. Planned addition: a deploy job on merge that pushes the image to ECR and updates the Lambda function.
 
 CI calls the same `make` targets you run locally. See [Code style and the pre-PR check](#code-style-and-the-pre-pr-check).
 
@@ -589,7 +727,7 @@ We check for leaked credentials (cloud keys, W&B API keys, tokens) at several po
 
 ### Dependency updates
 
-[Dependabot](.github/dependabot.yml) opens weekly PRs that update pip packages, GitHub Actions, and pre-commit hooks, plus PRs for security fixes. They go through the same CI and review as any other PR.
+[Dependabot](.github/dependabot.yml) opens weekly PRs that update pip packages, the Docker base images, GitHub Actions, and pre-commit hooks, plus PRs for security fixes. They go through the same CI and review as any other PR.
 
 ### Planned tooling
 

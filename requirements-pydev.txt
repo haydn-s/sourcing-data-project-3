@@ -6,19 +6,16 @@
 # Versions are pinned for reproducibility, and Dependabot proposes updates weekly.
 # Mac users: torch 2.12+ needs macOS 14 or newer.
 
--r requirements-dev.txt     # pre-commit, pytest
-# When requirements.txt exists, add "-r requirements.txt" here and keep shared
-# pins (e.g., scikit-learn) identical so saved models load in both environments.
+-r requirements-dev.txt     # pre-commit, pytest, httpx2
+-r requirements.txt         # the pipeline and API: numpy, pandas, pyarrow, scikit-learn,
+                            # boto3, wandb, matplotlib, FastAPI, ...
+# Shared packages are pinned only in requirements.txt, so PyDev and the Docker
+# image always match. That matters most for scikit-learn: a model saved with
+# one version may not load in another.
 
-# Core numerics and data
-numpy==2.5.4
-pandas==3.1.1
+# Numerics and statistics (beyond requirements.txt)
 scipy==1.18.1
-pyarrow==26.0.1             # Parquet files
-
-# Statistics and classical ML
 statsmodels==0.15.0
-scikit-learn==1.9.1
 xgboost==3.4.1
 
 # Deep learning
@@ -26,8 +23,7 @@ torch==2.15.0
 torchvision==0.29.2         # datasets, transforms, pretrained vision models
 tensorflow==2.21.0          # includes Keras 3
 
-# Visualization
-matplotlib==3.11.2
+# Visualization (matplotlib comes from requirements.txt)
 seaborn==0.13.2
 plotly==7.1.0               # interactive charts
 shap==0.54.1                # model explanation plots
@@ -37,8 +33,5 @@ jupyterlab==4.6.5
 ipykernel==7.4.0
 ipywidgets==8.1.9           # interactive widgets and notebook progress bars
 
-# Experiment tracking and utilities
-wandb==0.31.0
-pyyaml==6.0.3               # config.yaml
-python-dotenv==1.2.4        # load .env
+# Utilities
 tqdm==4.70.1

@@ -1,0 +1,26 @@
+# Runtime dependencies for the pipeline and the API, pinned for reproducibility.
+# Installed by the Docker image and CI, and included in PyDev through
+# requirements-pydev.txt. Everything here ends up in the Lambda image, so keep
+# the list lean: notebooks, plotting extras, and deep learning stay in PyDev.
+#
+# XGBoost isn't here yet. If we pick it (kickoff decision 6), move its pin
+# here from requirements-pydev.txt, and check the image size afterward.
+
+# Data and ML
+numpy==2.5.4
+pandas==3.1.1
+pyarrow==26.0.1             # Parquet files
+scikit-learn==1.9.1         # saved models only load with the same version
+joblib==1.6.0               # model files
+
+# Config, storage, and tracking
+pyyaml==6.0.3               # config.yaml
+pydantic==2.14.3            # config validation and API schemas
+python-dotenv==1.2.4        # load .env for local runs
+boto3==1.43.126             # S3
+wandb==0.31.0
+matplotlib==3.11.2          # evaluation plots
+
+# Serving
+fastapi==0.162.0
+uvicorn==0.54.0

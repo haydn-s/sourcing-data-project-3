@@ -1,0 +1,25 @@
+# Keep the build context small and secrets out of the image. The Dockerfile
+# copies only what it needs, but the whole context is sent to the builder.
+.git
+.github
+.env
+.env.*
+**/__pycache__
+.pytest_cache
+.ruff_cache
+PyDev/
+.venv/
+venv/
+node_modules/
+
+# Data and models come from S3 or a mounted folder at run time
+data/
+models/
+wandb/
+mlruns/
+
+docs/
+notebooks/
+tests/
+frontend/
+*.md

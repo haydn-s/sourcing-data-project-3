@@ -1,0 +1,18 @@
+# The same demo data as a regression task: predict lifetime_value.
+# Shows that switching tasks is a config change, not a code change.
+#   make train CONFIG=configs/regression_demo.yaml
+extends: ../config.yaml
+
+task: regression
+
+data:
+  target: lifetime_value
+
+split:
+  stratify: false
+
+evaluation:
+  primary_metric: rmse
+
+tracking:
+  tags: [demo, regression]

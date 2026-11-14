@@ -1,0 +1,11 @@
+# Linear model: logistic regression (classification) or ridge regression
+# (regression). A simple, explainable comparison point.
+#   make train CONFIG=configs/linear.yaml
+extends: ../config.yaml
+
+model:
+  type: linear
+  params: {}
+
+tracking:
+  tags: [demo, linear]

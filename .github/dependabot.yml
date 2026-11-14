@@ -13,6 +13,17 @@ updates:
       python-minor-and-patch:
         update-types: [minor, patch]
 
+  # The Python base image and the Lambda Web Adapter pinned in the Dockerfile
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build(deps)
+    groups:
+      docker-images:
+        patterns: ["*"]
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

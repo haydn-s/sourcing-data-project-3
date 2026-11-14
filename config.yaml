@@ -1,0 +1,52 @@
+# Pipeline configuration. Every data and training parameter lives here.
+#
+# Until we pick a dataset (kickoff decision 1), this trains on a synthetic demo
+# dataset. Create it with `make demo-data`. Swapping in the real dataset means
+# editing the data, features, task, and evaluation sections, not the code.
+#
+# Experiment variants live in configs/ and inherit from this file (`extends:`).
+# Override single values from the command line:
+#   python -m src.train --config config.yaml --set model.params.max_depth=5
+# Relative paths are relative to the repo root (the container's /app).
+
+seed: 42
+task: classification              # classification | regression
+
+data:
+  # When remote_uri is set, training downloads it to local_path first.
+  # CSV or Parquet, chosen by file extension.
+  remote_uri: null                # e.g. s3://<bucket>/data/processed/<file>.parquet
+  local_path: data/demo/demo.csv
+  target: churned
+
+features:
+  # Columns not listed here (other than the target) are ignored.
+  numeric: [age, monthly_spend, support_calls]
+  categorical: [region, plan]
+
+split:
+  test_size: 0.15
+  val_size: 0.15
+  stratify: true                  # keep class proportions; classification only
+
+model:
+  # dummy (baseline) | linear | random_forest | hist_gradient_boosting | xgboost
+  type: random_forest
+  # Passed straight to the scikit-learn estimator. A variant that sets params
+  # replaces this whole mapping. random_state comes from `seed` unless set here.
+  params:
+    n_estimators: 200
+    max_depth: 10
+
+evaluation:
+  # classification: accuracy | f1 (macro) | roc_auc; regression: rmse | mae | r2
+  primary_metric: f1
+
+tracking:
+  project: sourcing-data-project-3   # W&B project
+  entity: null                       # W&B team; null uses your default entity
+  tags: [demo]
+
+output:
+  local_dir: models               # each run writes models/<run-id>/ and models/latest/
+  remote_prefix: null             # e.g. s3://<bucket>/models

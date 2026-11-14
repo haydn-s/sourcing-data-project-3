@@ -9,9 +9,13 @@ FROM ?= origin/main
 TO ?= HEAD
 VENV := PyDev
 VENV_PYTHON := 3.12
+CONFIG ?= config.yaml
+IMAGE ?= project3
+PLATFORM ?= linux/amd64
 
 .DEFAULT_GOAL := help
-.PHONY: help venv setup format lint test lint-commits lint-title pr-ready
+.PHONY: help venv setup format lint test lint-commits lint-title pr-ready \
+	demo-data train serve docker-build docker-smoke
 
 help: ## List available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -43,6 +47,21 @@ test: ## Run the tests (passes with a notice until tests exist)
 	@pytest; status=$$?; \
 	if [ $$status -eq 5 ]; then echo "No tests collected yet."; exit 0; fi; \
 	exit $$status
+
+demo-data: ## Generate the synthetic demo dataset (data/demo/demo.csv)
+	python -m src.demo_data
+
+train: ## Train a model: make train CONFIG=configs/linear.yaml (default: config.yaml)
+	python -m src.train --config $(CONFIG)
+
+serve: ## Run the API locally with auto-reload (serves models/latest unless MODEL_URI is set)
+	uvicorn api.main:create_app --factory --reload --port 8080
+
+docker-build: ## Build the image for Lambda (linux/amd64, no attestations)
+	docker buildx build --platform $(PLATFORM) --provenance=false --sbom=false -t $(IMAGE) --load .
+
+docker-smoke: docker-build ## Build the image, train on demo data inside it, and test the API
+	IMAGE=$(IMAGE) sh scripts/docker_smoke_test.sh
 
 lint-commits: ## Lint commit messages in FROM..TO (default: origin/main..HEAD)
 	$(COMMITLINT) --from $(FROM) --to $(TO) --verbose
