@@ -383,7 +383,7 @@ What you fill in depends on what you run. Nobody needs every value.
 
 **ML pipeline and API** (`make train`, `make serve`):
 
-1. Run `wandb login`, or set `WANDB_API_KEY`. To train without a W&B account, set `WANDB_MODE=disabled` instead.
+1. Get added to our W&B team, `dhs27-duke-university` (`tracking.entity` in `config.yaml`), then run `wandb login` or set `WANDB_API_KEY`. Until you're on the team, or to train without a W&B account, set `WANDB_MODE=disabled`.
 2. Leave `MODEL_URI` as is to serve your latest local model, or set it to `gs://climate-impact-pipeline-data/models/latest/model.joblib` to serve the published one.
 3. That's all to train: training downloads the processed data from the public bucket, so it needs no data-source keys and no Google login.
 4. To upload models (once `output.remote_prefix` is set in `config.yaml`), sign in to Google Cloud ([Authenticate](#authenticate)). The bucket's owner first grants your Google account write access, once:

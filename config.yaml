@@ -85,7 +85,7 @@ evaluation:
 
 tracking:
   project: sourcing-data-project-3   # W&B project
-  entity: null                       # W&B team; null uses your default entity
+  entity: dhs27-duke-university      # W&B team, so everyone's runs land in one project
   tags: [demo]
 
 output:
