@@ -44,7 +44,7 @@ class SourceConfig(_Section):
 
     name: str = Field(pattern=r"^[a-z][a-z0-9_]*$")  # file names and cleaner lookup
     type: str  # file | http, or a custom type registered in src/ingest.py
-    uri: str | None = None  # file: local path, http(s) URL, s3://, or gs://
+    uri: str | None = None  # file: local path, http(s) URL, or gs://
     url: str | None = None  # http: the endpoint
     params: dict[str, Any] = Field(default_factory=dict)  # http: query parameters
     headers: dict[str, str] = Field(default_factory=dict)  # http
@@ -174,8 +174,8 @@ class PipelineConfig(_Section):
             ("ingest.remote_prefix", self.ingest.remote_prefix),
             ("output.remote_prefix", self.output.remote_prefix),
         ):
-            if uri is not None and not uri.startswith(("s3://", "gs://")):
-                raise ValueError(f"{name} must be an s3:// or gs:// URI, or null. Got '{uri}'")
+            if uri is not None and not uri.startswith("gs://"):
+                raise ValueError(f"{name} must be a gs:// URI or null, got '{uri}'")
         return self
 
 

@@ -102,7 +102,7 @@ def test_missing_model_says_how_to_fix_it(tmp_path: Path) -> None:
         create_app(str(tmp_path / "model.joblib"))
 
 
-def test_s3_model_downloads_both_files_to_the_cache(
+def test_cloud_model_downloads_both_files_to_the_cache(
     train_model: Callable[..., Path], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     model_dir = train_model().parent
@@ -117,10 +117,10 @@ def test_s3_model_downloads_both_files_to_the_cache(
     monkeypatch.setattr(api.main, "download", fake_download)
     monkeypatch.setenv("MODEL_CACHE_DIR", str(tmp_path / "cache"))
 
-    bundle = load_bundle("s3://bucket/models/latest/model.joblib")
+    bundle = load_bundle("gs://bucket/models/latest/model.joblib")
 
     assert requested == [
-        "s3://bucket/models/latest/model.joblib",
-        "s3://bucket/models/latest/metadata.json",
+        "gs://bucket/models/latest/model.joblib",
+        "gs://bucket/models/latest/metadata.json",
     ]
     assert bundle.feature_names == list(SAMPLE_REQUEST)

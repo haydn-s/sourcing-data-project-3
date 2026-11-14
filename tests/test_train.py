@@ -66,10 +66,10 @@ def test_uploads_run_and_latest_when_remote_prefix_is_set(
     uploaded: list[str] = []
     monkeypatch.setattr(src.train, "upload", lambda src_path, uri: uploaded.append(uri) or True)
 
-    result = train(config_for("output.remote_prefix=s3://bucket/models"))
+    result = train(config_for("output.remote_prefix=gs://bucket/models"))
 
     assert sorted(uploaded) == sorted(
-        f"s3://bucket/models/{folder}/{name}"
+        f"gs://bucket/models/{folder}/{name}"
         for folder in (result.run_id, "latest")
         for name in ("model.joblib", "metadata.json")
     )

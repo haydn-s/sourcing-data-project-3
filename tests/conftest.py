@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from src import storage
 from src.config import PipelineConfig, load_config
 from src.demo_data import make_demo_frame
 
@@ -26,6 +27,23 @@ def disable_wandb(monkeypatch: pytest.MonkeyPatch, wandb_dir: Path) -> None:
 def _no_wandb(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Tests never log to W&B or write a ./wandb folder."""
     disable_wandb(monkeypatch, tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def _no_cloud_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests never touch the real bucket, even on a machine that's signed in to Google Cloud.
+
+    config.yaml names our bucket, so without this a test could upload to it.
+    Tests of storage itself swap in a fake client.
+    """
+
+    def blocked(*, signed: bool) -> None:
+        raise AssertionError(
+            "a test tried to reach Cloud Storage. Use a fake (tests/test_storage.py)"
+        )
+
+    monkeypatch.setattr(storage, "has_gcp_credentials", lambda: False)
+    monkeypatch.setattr(storage, "_client", blocked)
 
 
 @pytest.fixture
@@ -74,6 +92,7 @@ def pipeline_config(
         REPO_CONFIG,
         [
             f"ingest.raw_dir={tmp_path / 'raw'}",
+            "ingest.remote_prefix=null",  # tests opt in to uploads
             f"data.local_path={tmp_path / 'processed' / 'data.parquet'}",
             f"ingest.sources={json.dumps(sources)}",  # JSON is valid YAML
             *overrides,

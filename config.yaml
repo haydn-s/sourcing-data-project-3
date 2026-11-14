@@ -16,7 +16,7 @@ data:
   # The processed table: the data pipeline writes local_path and pushes it to
   # remote_uri, and training downloads remote_uri to local_path (when it's set).
   # CSV or Parquet, chosen by file extension.
-  remote_uri: null                # e.g. gs://<bucket>/processed/<file>.parquet
+  remote_uri: null                # e.g. gs://climate-impact-pipeline-data/processed/<file>.parquet
   local_path: data/demo/demo.csv
   target: churned
 
@@ -25,7 +25,7 @@ data:
 # writes it directly.
 ingest:
   raw_dir: data/raw
-  remote_prefix: null             # e.g. gs://<bucket>/raw: snapshots are uploaded here too
+  remote_prefix: gs://climate-impact-pipeline-data/raw  # snapshots are uploaded here too
   # The first source is the base table. Each later source with join_on is
   # joined onto it by those columns (how: left by default, or inner); a source
   # without join_on stays out of the join but feature steps can use it.
@@ -39,7 +39,7 @@ ingest:
   #     format: json                # json (default) or csv
   #     records: data               # dotted key path to the list of records
   #   - name: climate
-  #     type: file                  # CSV/Parquet: local path, http(s) URL, s3://, gs://
+  #     type: file                  # CSV/Parquet: local path, http(s) URL, or gs://
   #     uri: https://example.org/state-climate.csv
   #     join_on: [state, year]
   # Other types (paging APIs, several requests) are registered in src/ingest.py.
@@ -83,4 +83,7 @@ tracking:
 
 output:
   local_dir: models               # each run writes models/<run-id>/ and models/latest/
-  remote_prefix: null             # e.g. s3://<bucket>/models or gs://<bucket>/models
+  # Set to gs://climate-impact-pipeline-data/models once this config trains the
+  # real dataset. Until then, leaving it null keeps demo models out of the
+  # bucket, where models/latest/ is what the deployed API serves.
+  remote_prefix: null

@@ -2,7 +2,7 @@
 
 Each source in `ingest.sources` is fetched according to its `type`:
 
-- `file`: a CSV or Parquet file at a local path, an http(s) URL, or an s3:// or gs:// URI.
+- `file`: a CSV or Parquet file at a local path, an http(s) URL, or a gs:// URI.
 - `http`: a GET request to a web API that returns JSON records or CSV.
 - anything else: a function registered below with `@source_type("<name>")`, for
   APIs that need paging, several requests, or other special handling.
@@ -33,7 +33,7 @@ import pandas as pd
 
 from src.config import PipelineConfig, SourceConfig
 from src.data import file_sha256, read_table
-from src.storage import download, is_remote_uri, join_uri, upload
+from src.storage import download, is_gcs_uri, join_uri, upload
 
 log = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ def scrub(text: str, secrets: Iterable[str]) -> str:
 @source_type("file")
 def fetch_file(source: SourceConfig) -> pd.DataFrame:
     uri = expand_env(source.uri, source=source.name)
-    if is_remote_uri(uri):
+    if is_gcs_uri(uri):
         with tempfile.TemporaryDirectory() as tmp:
             return read_table(download(uri, Path(tmp) / Path(uri).name))
     return read_table(uri)

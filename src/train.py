@@ -170,7 +170,7 @@ def _to_python(value: Any) -> Any:
 
 
 def _publish(cfg: PipelineConfig, model_dir: Path, run_id: str) -> None:
-    """Copy the run to models/latest/ locally, and to S3 when output.remote_prefix is set."""
+    """Copy the run to models/latest/ locally, and to Cloud Storage when output.remote_prefix is set."""
     latest = cfg.output.local_dir / "latest"
     shutil.rmtree(latest, ignore_errors=True)
     shutil.copytree(model_dir, latest)

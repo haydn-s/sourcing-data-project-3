@@ -2,9 +2,9 @@
 
     python -m scripts.push_data --config config.yaml
 
-Uploads data.local_path (written by scripts/prepare_data.py) to data.remote_uri,
-a gs:// or s3:// location. Training downloads it from there with
-src/data.py, and so can anyone else when the bucket is public.
+Uploads data.local_path (written by scripts/prepare_data.py) to data.remote_uri
+in Cloud Storage. Training downloads it from there with src/data.py, and since
+the bucket is public, so can anyone else.
 
 It refuses to upload a table that's missing columns the config's features,
 target, or split use, since training on it would fail. --force skips that check.
@@ -17,7 +17,7 @@ import logging
 from scripts._cli import config_parser, load
 from src.config import PipelineConfig
 from src.data import file_sha256, missing_columns, read_table
-from src.storage import is_gcs_uri, public_url, upload
+from src.storage import public_url, upload
 
 log = logging.getLogger(__name__)
 
@@ -40,11 +40,12 @@ def push(cfg: PipelineConfig, *, force: bool = False) -> str:
             "src/prepare.py, or pass --force to upload it anyway"
         )
     if not upload(path, remote_uri):
-        raise SystemExit(f"{path} wasn't uploaded: no cloud credentials (see the warning above)")
+        raise SystemExit(
+            f"{path} wasn't uploaded: no Google Cloud credentials (see the warning above)"
+        )
 
     log.info("Pushed %s (sha256 %s)", remote_uri, file_sha256(path))
-    if is_gcs_uri(remote_uri):
-        log.info("If the bucket is public, it's also at %s", public_url(remote_uri))
+    log.info("Anyone can read it at %s", public_url(remote_uri))
     return remote_uri
 
 

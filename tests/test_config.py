@@ -47,8 +47,9 @@ def test_set_requires_key_equals_value() -> None:
         ("features.numeric=[churned]", "also listed as a feature"),
         ("features.categorical=[age]", "listed more than once"),
         ("model.type=svm", "model.type"),
-        ("data.remote_uri=https://example.org/data.csv", "must be an s3:// or gs:// URI"),
-        ("ingest.remote_prefix=bucket/raw", "must be an s3:// or gs:// URI"),
+        ("data.remote_uri=https://example.org/data.csv", "must be a gs:// URI"),
+        ("ingest.remote_prefix=bucket/raw", "must be a gs:// URI"),
+        ("output.remote_prefix=https://example.org/models", "must be a gs:// URI"),
         ("split.time_column=churned", "can't be the split's time_column"),
         ("data.typo=1", "Extra inputs are not permitted"),
     ],
@@ -65,13 +66,13 @@ def test_extends_loop_is_reported(tmp_path: Path) -> None:
         load_config(tmp_path / "a.yaml")
 
 
-def test_cloud_locations_accept_s3_and_gcs() -> None:
+def test_cloud_locations_accept_gcs() -> None:
     cfg = load_config(
         REPO_CONFIG,
         [
             "data.remote_uri=gs://bucket/processed/data.parquet",
             "ingest.remote_prefix=gs://bucket/raw",
-            "output.remote_prefix=s3://bucket/models",
+            "output.remote_prefix=gs://bucket/models",
         ],
     )
     assert cfg.data.remote_uri == "gs://bucket/processed/data.parquet"

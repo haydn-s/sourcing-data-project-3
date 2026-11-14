@@ -58,5 +58,5 @@ def test_push_fails_when_the_upload_is_skipped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(push_data, "upload", lambda src, uri: False)
-    with pytest.raises(SystemExit, match="no cloud credentials"):
+    with pytest.raises(SystemExit, match="no Google Cloud credentials"):
         push_data.push(processed_config(tmp_path))

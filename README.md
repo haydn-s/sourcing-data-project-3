@@ -1,6 +1,6 @@
 # &lt;Project Name&gt;
 
-> 🚧 **Status: framework in place, dataset not chosen.** The pipeline, API, and Docker image are built and run end to end on a synthetic demo dataset ([try it](#0-try-it-on-the-demo-data)). Pointing them at the real dataset is a config change. Sections marked **TODO** get filled in once we pick it at kickoff. The stack is chosen: Google Cloud Storage for the data, AWS (S3 and Lambda) for the models and API, Weights & Biases, FastAPI, and Streamlit. See the [Development Plan](docs/DEVELOPMENT_PLAN.md) for the reasoning and the open decisions.
+> 🚧 **Status: framework in place, dataset not chosen.** The pipeline, API, and Docker image are built and run end to end on a synthetic demo dataset ([try it](#0-try-it-on-the-demo-data)). Pointing them at the real dataset is a config change. Sections marked **TODO** get filled in once we pick it at kickoff. The stack is chosen: Google Cloud Storage for the data and models, AWS Lambda for the API, Weights & Biases, FastAPI, and Streamlit. See the [Development Plan](docs/DEVELOPMENT_PLAN.md) for the reasoning and the open decisions.
 
 **TODO:** One-sentence pitch: what we predict, for whom, and why it's useful.
 
@@ -80,8 +80,8 @@ flowchart LR
     SRC[Public data sources<br/>web APIs · files] -->|ingest → prepare → push<br/>scripts/*_data.py| STORED[(Google Cloud Storage<br/>raw/ · processed/ · public read)]
     STORED -->|src/data.py<br/>download| TRAIN[Training pipeline<br/>src/train.py + config.yaml]
     TRAIN -->|params · metrics · plots| WB[Weights & Biases]
-    TRAIN -->|model.joblib| STOREM[(Amazon S3<br/>models/ · private)]
-    STOREM -->|loaded at startup<br/>IAM role| API[FastAPI /predict<br/>Docker image on AWS Lambda]
+    TRAIN -->|model.joblib| STOREM[(Google Cloud Storage<br/>models/ · public read)]
+    STOREM -->|loaded at startup<br/>anonymous read| API[FastAPI /predict<br/>Docker image on AWS Lambda]
     UI[Streamlit front-end<br/>Streamlit Community Cloud] -->|HTTP POST JSON<br/>Function URL| API
     USER((User)) --> UI
 ```
@@ -135,10 +135,9 @@ TODO: one paragraph on what worked, what didn't, and where the model fails (see 
 
 | Service | Purpose |
 |---|---|
-| **Google Cloud Storage** | Hosts the raw snapshots and the processed dataset (publicly readable), in project `climate-impact-pipeline`. Versioning is on |
-| **Amazon S3** | Hosts the trained model artifacts (private). Versioning is on |
+| **Google Cloud Storage** | Bucket `climate-impact-pipeline-data` (project `climate-impact-pipeline`, `us-east1`) holds the raw snapshots, the processed dataset, and the trained models. It's publicly readable, so graders can rerun training and the API loads the model without Google credentials. Versioning is on |
 | **Amazon ECR** | Stores the Docker image that Lambda runs |
-| **AWS Lambda** | Runs the containerized FastAPI service at a public HTTPS Function URL, through the [AWS Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter). Scales to zero when idle. Reads the model from S3 through its IAM role, so it stores no AWS keys |
+| **AWS Lambda** | Runs the containerized FastAPI service at a public HTTPS Function URL, through the [AWS Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter). Scales to zero when idle. Reads the model from Cloud Storage at startup. The bucket is public, so the function stores no cloud keys |
 | **Weights & Biases** | Experiment tracking: parameters, metrics, plots, versioned model artifacts |
 | **Streamlit Community Cloud** | Hosts the public front-end, deployed straight from this repo |
 | **GitHub Actions** | CI checks on every pull request (see [CI checks](#ci-checks)) |
@@ -233,7 +232,7 @@ That turns the table above into measured numbers. It's listed as a stretch task 
 │   └── docker_smoke_test.sh # Trains and serves inside the image (make docker-smoke, CI)
 ├── src/
 │   ├── config.py            # Load + validate config files (extends:, --set overrides)
-│   ├── storage.py           # Copy files to and from S3 or Cloud Storage (anonymous reads without credentials)
+│   ├── storage.py           # Copy files to and from Cloud Storage (anonymous reads of public files)
 │   ├── ingest.py            # Source types (file, http, custom) and raw snapshots
 │   ├── prepare.py           # Cleaners, joins, and feature steps
 │   ├── data.py              # Load the processed data, train/validation/test split
@@ -266,8 +265,8 @@ That turns the table above into measured numbers. It's listed as a stretch task 
 - `make` (preinstalled on macOS and Linux. On Windows, use WSL or Git Bash)
 - [Node.js](https://nodejs.org/) 22.12+ (`make pr-ready` uses it to run commitlint)
 - [Docker](https://docs.docker.com/get-docker/)
-- The [Google Cloud CLI](https://cloud.google.com/sdk/docs/install) and access to project `climate-impact-pipeline`, to upload data. Not needed just to train: the processed data is publicly readable
-- The [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) and a login to our AWS account (ask the account owner), for the models and deployment
+- The [Google Cloud CLI](https://cloud.google.com/sdk/docs/install) and access to project `climate-impact-pipeline`, to upload data and models. Not needed just to train: the processed data is publicly readable
+- The [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) and a login to our AWS account (ask the account owner), to deploy the API to Lambda
 - A [Weights & Biases](https://wandb.ai/) account (W&B is now part of CoreWeave Forge). Students can apply for the free academic plan with a university email. Not needed just to train: set `WANDB_MODE=disabled`
 
 ### Install
@@ -294,7 +293,7 @@ pre-commit install
 
 ### The PyDev environment
 
-PyDev is our shared local environment for data science and deep learning work (Python 3.12). It's defined in [`requirements-pydev.txt`](requirements-pydev.txt), which includes [`requirements.txt`](requirements.txt) (the pipeline and API, plus boto3, FastAPI, and Uvicorn), with every version pinned:
+PyDev is our shared local environment for data science and deep learning work (Python 3.12). It's defined in [`requirements-pydev.txt`](requirements-pydev.txt), which includes [`requirements.txt`](requirements.txt) (the pipeline and API, plus google-cloud-storage, FastAPI, and Uvicorn), with every version pinned:
 
 | Area | Libraries |
 |---|---|
@@ -304,7 +303,7 @@ PyDev is our shared local environment for data science and deep learning work (P
 | Visualization | matplotlib, seaborn, plotly, shap |
 | Notebooks | jupyterlab, ipykernel, ipywidgets |
 | Tracking and utilities | wandb, pyyaml, python-dotenv, tqdm |
-| Pipeline and serving | boto3, FastAPI, Uvicorn, pydantic (from `requirements.txt`) |
+| Pipeline and serving | google-cloud-storage, requests, FastAPI, Uvicorn, pydantic (from `requirements.txt`) |
 | Dev tooling | pre-commit, pytest, httpx2 (from `requirements-dev.txt`) |
 
 To use PyDev from Jupyter or VS Code notebooks, register it as a kernel once:
@@ -332,7 +331,19 @@ Keeping torch and TensorFlow out of `requirements.txt` keeps the API's Docker im
 wandb login
 ```
 
-Set up an AWS CLI profile so local code can read and write S3. Use the first command if the account uses IAM Identity Center, or the second if you have an IAM user's access keys:
+Sign in to Google Cloud so the pipeline can upload data and models to Cloud Storage. The second command saves Application Default Credentials, which the Python client uses:
+
+```bash
+gcloud config set project climate-impact-pipeline
+```
+
+```bash
+gcloud auth application-default login
+```
+
+Reading the public bucket needs no login, so anyone can train without these.
+
+To deploy the API, set up an AWS CLI profile. Use the first command if the account uses IAM Identity Center, or the second if you have an IAM user's access keys:
 
 ```bash
 aws configure sso --profile project3
@@ -348,19 +359,7 @@ Check which account and role you're signed in as:
 aws sts get-caller-identity --profile project3
 ```
 
-Then set `AWS_PROFILE=project3` in `.env`. With Identity Center, run `aws sso login --profile project3` when your session expires.
-
-Sign in to Google Cloud so the data pipeline can upload to Cloud Storage. The second command saves Application Default Credentials, which the Python client uses:
-
-```bash
-gcloud config set project climate-impact-pipeline
-```
-
-```bash
-gcloud auth application-default login
-```
-
-Reading the public processed data needs neither login.
+The deploy commands in [Usage 5](#5-deploy-the-api-to-aws-lambda) use this profile. With Identity Center, run `aws sso login --profile project3` when your session expires.
 
 ### Environment variables
 
@@ -368,14 +367,12 @@ Non-secret settings live in `config.yaml`. Secrets and deployment-specific value
 
 | Variable | Used by | Description |
 |---|---|---|
-| `AWS_PROFILE` | pipeline | AWS CLI profile with access to our S3 bucket (see [Authenticate](#authenticate)). Lambda doesn't need it: it uses its IAM role |
-| `AWS_REGION` | pipeline, API | Region of our bucket, e.g. `us-east-1`. Lambda sets it automatically |
 | `GOOGLE_CLOUD_PROJECT` | data pipeline | Our Google Cloud project, `climate-impact-pipeline` |
 | API keys, e.g. `NASS_API_KEY` | data pipeline | Keys for data sources. `config.yaml` refers to them as `${NAME}`, so they never go in git |
 | `WANDB_API_KEY` | pipeline | W&B API key (or run `wandb login`) |
 | `WANDB_MODE` | pipeline | Optional. `offline` or `disabled` lets you train without a W&B account |
-| `MODEL_URI` | API | Model location: `s3://<bucket>/models/latest/model.joblib` or a local path (default: `models/latest/model.joblib`) |
-| `MODEL_CACHE_DIR` | API | Optional. Where an S3 model is downloaded (default: a folder in `/tmp`, the only writable path on Lambda) |
+| `MODEL_URI` | API | Model location: `gs://climate-impact-pipeline-data/models/latest/model.joblib` or a local path (default: `models/latest/model.joblib`) |
+| `MODEL_CACHE_DIR` | API | Optional. Where a Cloud Storage model is downloaded (default: a folder in `/tmp`, the only writable path on Lambda) |
 | `API_URL` | front-end | Base URL of the deployed API (the Lambda Function URL) |
 
 ## Usage
@@ -384,7 +381,7 @@ Run these from the repo root, inside PyDev (`source PyDev/bin/activate`).
 
 ### 0. Try it on the demo data
 
-Until we pick a dataset, `config.yaml` points at a synthetic customer-churn dataset (made-up rows, no real people). This runs the whole pipeline locally, with no AWS or W&B account:
+Until we pick a dataset, `config.yaml` points at a synthetic customer-churn dataset (made-up rows, no real people). This runs the whole pipeline locally, with no cloud or W&B account:
 
 ```bash
 make demo-data
@@ -420,11 +417,11 @@ make prepare
 make push
 ```
 
-1. **Ingest** ([`scripts/ingest_data.py`](scripts/ingest_data.py)) fetches every source in `ingest.sources` and saves its rows unchanged to `data/raw/<name>.csv`, with a `manifest.json` recording when and where each came from. Sources are files (local, URL, `gs://`, `s3://`) or web APIs (`type: http`, JSON or CSV). APIs that need paging get a custom type in [`src/ingest.py`](src/ingest.py). With `ingest.remote_prefix` set, the snapshots are uploaded too. Add `--source NAME` to refetch just one.
+1. **Ingest** ([`scripts/ingest_data.py`](scripts/ingest_data.py)) fetches every source in `ingest.sources` and saves its rows unchanged to `data/raw/<name>.csv`, with a `manifest.json` recording when and where each came from. Sources are files (local, URL, or `gs://`) or web APIs (`type: http`, JSON or CSV). APIs that need paging get a custom type in [`src/ingest.py`](src/ingest.py). With `ingest.remote_prefix` set, the snapshots are uploaded too. Add `--source NAME` to refetch just one.
 2. **Prepare** ([`scripts/prepare_data.py`](scripts/prepare_data.py)) cleans each snapshot, joins the sources on their `join_on` columns, runs the feature steps in `prepare.feature_steps`, and writes `data.local_path`. Every source gets a standard clean (snake_case columns, trimmed text, no empty or duplicate rows). Its own cleaner, and the feature steps, are functions in [`src/prepare.py`](src/prepare.py). The joins check for the usual mistakes: missing keys, mismatched key types, and keys that would duplicate rows.
 3. **Push** ([`scripts/push_data.py`](scripts/push_data.py)) uploads the processed table to `data.remote_uri`. It refuses a table that lacks the config's features or target, since training on it would fail.
 
-Training then downloads `data.remote_uri` with [`src/data.py`](src/data.py). Because the bucket is publicly readable, that needs no Google login. The file is also at `https://storage.googleapis.com/<bucket>/processed/<file>`.
+Training then downloads `data.remote_uri` with [`src/data.py`](src/data.py). Because the bucket is publicly readable, that needs no Google login. The file is also at `https://storage.googleapis.com/climate-impact-pipeline-data/processed/<file>`.
 
 ### 2. Train the model
 
@@ -432,7 +429,7 @@ Training then downloads `data.remote_uri` with [`src/data.py`](src/data.py). Bec
 make train
 ```
 
-That runs `python -m src.train --config config.yaml`. It downloads the processed data from cloud storage (when `data.remote_uri` is set), splits it, trains, evaluates on the validation and test sets, logs everything to W&B, and saves the model pipeline locally and to S3 under `models/`.
+That runs `python -m src.train --config config.yaml`. It downloads the processed data from cloud storage (when `data.remote_uri` is set), splits it, trains, evaluates on the validation and test sets, logs everything to W&B, and saves the model pipeline locally and, when `output.remote_prefix` is set, to `gs://climate-impact-pipeline-data/models/`.
 
 Each run writes `models/<run-id>/` and copies it to `models/latest/`:
 
@@ -452,7 +449,7 @@ make train CONFIG=configs/baseline.yaml
 python -m src.train --config config.yaml --set model.params.max_depth=5 --set split.test_size=0.2
 ```
 
-**Without our accounts.** Training still runs without AWS credentials (the processed data is public, and the model is saved locally only) or a W&B account:
+**Without our accounts.** Training still runs without Google Cloud credentials (the processed data is public, and the model is saved locally only) or a W&B account:
 
 ```bash
 WANDB_MODE=disabled make train
@@ -464,7 +461,7 @@ WANDB_MODE=disabled make train
 make serve
 ```
 
-That runs `uvicorn api.main:create_app --factory --reload --port 8080`, serving `models/latest/model.joblib`. Set `MODEL_URI` to serve another model, including one in S3. The app is created by a factory because its request schema comes from the model it loads.
+That runs `uvicorn api.main:create_app --factory --reload --port 8080`, serving `models/latest/model.joblib`. Set `MODEL_URI` to serve another model, including one in Cloud Storage. The app is created by a factory because its request schema comes from the model it loads.
 
 ```bash
 curl http://localhost:8080/health
@@ -486,18 +483,18 @@ Build the image. `make docker-build` builds for `linux/amd64` without attestatio
 make docker-build
 ```
 
-The container reads your AWS login from your mounted `~/.aws` folder, and `AWS_PROFILE` in `.env` picks the profile. Mounting `data/` and `models/` keeps the data and trained models on your machine.
+Mounting `data/` and `models/` keeps the data and trained models on your machine. Training reads the public bucket with no login. To upload models from the container, also mount your Google credentials with `-v "$HOME/.config/gcloud:/root/.config/gcloud:ro"`.
 
 Train inside the container (arguments after `train` go to `src.train`):
 
 ```bash
-docker run --rm --env-file .env -v "$HOME/.aws:/root/.aws" -v "$PWD/data:/app/data" -v "$PWD/models:/app/models" project3 train
+docker run --rm --env-file .env -v "$PWD/data:/app/data" -v "$PWD/models:/app/models" project3 train
 ```
 
 Serve the API (the default command) on port 8080:
 
 ```bash
-docker run --rm -p 8080:8080 --env-file .env -v "$HOME/.aws:/root/.aws" -v "$PWD/models:/app/models" project3
+docker run --rm -p 8080:8080 --env-file .env -v "$PWD/models:/app/models" project3
 ```
 
 **Smoke test.** This builds the image, generates the demo data and trains inside it, then serves the model the way Lambda runs it (a non-root user and a read-only filesystem except `/tmp`) and calls `/health` and `/predict`. CI runs it on every PR:
@@ -540,8 +537,7 @@ docker push "$IMAGE"
 **3. Create the function (first time only).** In the Lambda console, choose **Create function → Container image**, pick the image, and set the architecture to **x86_64**. Then, under **Configuration**:
 
 - **General configuration:** memory 2048 MB, timeout 30 seconds
-- **Environment variables:** `MODEL_URI=s3://<bucket>/models/latest/model.joblib`
-- **Permissions:** open the execution role and add a policy that allows `s3:GetObject` on `arn:aws:s3:::<bucket>/models/*`
+- **Environment variables:** `MODEL_URI=gs://climate-impact-pipeline-data/models/latest/model.joblib`. The bucket is public, so the function needs no Google credentials or extra permissions to read it
 - **Function URL:** create one with auth type **NONE**. The console adds both permissions a public URL needs (`lambda:InvokeFunctionUrl` and `lambda:InvokeFunction`)
 
 **4. Deploy later changes.** Rebuild and push (steps 1 and 2), then point the function at the new image:
@@ -581,7 +577,7 @@ Every pipeline parameter lives in [`config.yaml`](config.yaml), which documents 
 |---|---|
 | `seed` | Random seed for the split and the model |
 | `task` | `classification` or `regression` |
-| `data` | Where the processed data lives (`remote_uri` in Cloud Storage or S3, cached at `local_path`) and the `target` column |
+| `data` | Where the processed data lives (`remote_uri` in Cloud Storage, cached at `local_path`) and the `target` column |
 | `ingest` | The data `sources` (type, location, parameters, join keys), the raw snapshot folder, and where to upload snapshots |
 | `prepare` | The feature steps to run after cleaning and joining |
 | `features` | The `numeric` and `categorical` columns to use. Other columns are ignored |
@@ -589,7 +585,7 @@ Every pipeline parameter lives in [`config.yaml`](config.yaml), which documents 
 | `model` | `type` (below) and `params`, passed straight to the scikit-learn estimator |
 | `evaluation` | `primary_metric`: `accuracy`, `f1` (macro), or `roc_auc` for classification; `rmse`, `mae`, or `r2` for regression |
 | `tracking` | W&B `project`, `entity` (team), and `tags` |
-| `output` | Local model folder and the cloud prefix (S3 or Cloud Storage) to upload models to |
+| `output` | Local model folder and the Cloud Storage prefix to upload models to |
 
 **Model types.** Each type works for both tasks, so switching tasks doesn't mean renaming the model. Add more in [`src/models.py`](src/models.py).
 
