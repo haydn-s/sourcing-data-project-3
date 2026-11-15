@@ -1,6 +1,6 @@
 # &lt;Project Name&gt;
 
-> 🚧 **Status: framework in place, dataset not chosen.** The data pipeline, the API, and the Docker image are built. The ML pipeline isn't yet: [`ml_pipeline/README.md`](ml_pipeline/README.md) describes what it reads and what the API needs from it. Pointing them at the real dataset is a config change. Sections marked **TODO** get filled in once we pick it at kickoff. The stack is chosen: Google Cloud Storage for the data and models, AWS Lambda for the API, Weights & Biases, FastAPI, and Streamlit. See the [Development Plan](docs/DEVELOPMENT_PLAN.md) for the reasoning and the open decisions.
+> 🚧 **Status: framework in place, dataset not chosen.** The data pipeline, a config-driven ML training pipeline, the API, and the Docker image are built. The real dataset, target, and features are still to be selected and configured. Sections marked **TODO** get filled in once we pick them at kickoff. The stack is chosen: Google Cloud Storage for the data and models, AWS Lambda for the API, Weights & Biases, FastAPI, and Streamlit. See the [Development Plan](docs/DEVELOPMENT_PLAN.md) for the reasoning and the open decisions.
 
 **TODO:** One-sentence pitch: what we predict, for whom, and why it's useful.
 
@@ -534,7 +534,7 @@ The ML pipeline then downloads `data.remote_uri`. Because the bucket is publicly
 
 ### 2. Train the model
 
-Comes with the ML pipeline, which isn't built yet. [`ml_pipeline/README.md`](ml_pipeline/README.md) describes what it reads (the processed table and `config.yaml`), the two files the API needs from it (`model.joblib` and `metadata.json`), and where to publish them (`gs://climate-impact-pipeline-data/models/`). `output.remote_prefix` in `config.yaml` stays `null` until it trains the real dataset, since `models/latest/` is what the deployed API serves.
+Run `make train` after setting `data.remote_uri`, the target, and features in `config.yaml`. It downloads the processed table, splits it, trains the configured model, evaluates the primary metric, and writes `model.joblib` plus `metadata.json` under `output.local_dir/<run-id>/` and `output.local_dir/latest/`. Set `output.remote_prefix` to publish both bundles to Cloud Storage; that requires Google write credentials. W&B authentication is also needed unless you set `WANDB_MODE=disabled`. See [`ml_pipeline/README.md`](ml_pipeline/README.md) for the config and artifact details. The current dataset and feature values are placeholders.
 
 ### 3. Run the API locally
 

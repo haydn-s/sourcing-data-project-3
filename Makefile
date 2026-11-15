@@ -15,7 +15,7 @@ PLATFORM ?= linux/amd64
 
 .DEFAULT_GOAL := help
 .PHONY: help venv setup format lint test lint-commits lint-title pr-ready \
-	ingest prepare push data serve docker-build docker-smoke
+	ingest prepare push data train serve docker-build docker-smoke
 
 help: ## List available commands
 	@awk 'BEGIN {FS = ":.*## "} /^##@/ {printf "\n%s\n", substr($$0, 5)} /^[a-zA-Z_-]+:.*## / {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -67,8 +67,10 @@ data: ## Run all three data stages in order
 	@$(MAKE) --no-print-directory prepare
 	@$(MAKE) --no-print-directory push
 
-# ML pipeline (ml_pipeline/): its targets, like `make train`, come with the
-# pipeline. See ml_pipeline/README.md.
+##@ ML pipeline (ml_pipeline/)
+
+train: ## Download processed data, train/evaluate the configured model, and save/publish it
+	python -m ml_pipeline.train --config $(CONFIG)
 
 ##@ API and Docker
 
