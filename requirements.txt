@@ -1,6 +1,6 @@
 # Runtime dependencies for the pipeline and the API, pinned for reproducibility.
 # Installed by the Docker image and CI, and included in PyDev through
-# requirements-pydev.txt. Everything here ends up in the Lambda image, so keep
+# requirements-pydev.txt. Everything here ends up in the API image, so keep
 # the list lean: notebooks, plotting extras, and deep learning stay in PyDev.
 #
 # XGBoost isn't here yet. If we pick it (kickoff decision 6), move its pin

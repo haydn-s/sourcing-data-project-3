@@ -6,8 +6,7 @@ Run it with the app factory, since the request schema depends on the model:
 
 MODEL_URI picks the model: a local path (default: models/latest/model.joblib)
 or a gs:// URI. metadata.json is read from the same folder. Cloud Storage files are
-downloaded to MODEL_CACHE_DIR (default: a folder under /tmp, the only writable
-path on Lambda).
+downloaded to MODEL_CACHE_DIR (default: a folder in the system temp directory).
 
 This module deliberately doesn't use `from __future__ import annotations`:
 FastAPI reads the /predict parameter's type at runtime, and that type is built

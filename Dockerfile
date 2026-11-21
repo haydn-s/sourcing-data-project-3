@@ -3,20 +3,18 @@
 #   docker run project3 python -m data_pipeline.push  run any other command
 # A `train` command comes with the ML pipeline (ml_pipeline/README.md).
 #
-# The same image runs on AWS Lambda. The Lambda Web Adapter (copied in below)
-# turns Lambda invocations into HTTP requests to uvicorn, and does nothing
-# outside Lambda. Lambda needs a single-platform image without attestations:
+# The same image runs on Google Cloud Run (make deploy). Cloud Run sets $PORT,
+# which the API listens on, and runs only linux/amd64 images, so build for that
+# platform on every machine, Apple Silicon included:
 #   make docker-build
 # (docker buildx build --platform linux/amd64 --provenance=false --sbom=false ...)
 
-# Python matches PyDev. Dependabot proposes base image updates.
-FROM python:3.15.0-slim
+# Python matches PyDev and CI (3.12). Dependabot proposes patch updates only;
+# move all three to a new minor version together, once its wheels exist.
+FROM python:3.12.15-slim
 
-COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 /lambda-adapter /opt/extensions/lambda-adapter
-
-# Lambda's filesystem is read-only except /tmp, and a container run with
-# --user has no writable home directory, so nothing may write elsewhere at
-# runtime: no .pyc files, and matplotlib's and W&B's files go to /tmp.
+# A container run with --user has no writable home directory, so runtime files
+# go to /tmp: no .pyc files, and matplotlib's and W&B's files go there.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -26,8 +24,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     WANDB_DATA_DIR=/tmp/wandb-data \
     WANDB_CACHE_DIR=/tmp/wandb-cache \
     WANDB_CONFIG_DIR=/tmp/wandb-config \
-    PORT=8080 \
-    AWS_LWA_READINESS_CHECK_PATH=/health
+    PORT=8080
 
 WORKDIR /app
 

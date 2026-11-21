@@ -119,7 +119,8 @@ jobs:
   # Planned:
   #   docker: `make docker-smoke`, back in CI once the ML pipeline produces a
   #     model to train and serve in the image (see ml_pipeline/README.md)
-  #   deploy: on push to main, push the image to ECR and update the Lambda function
+  #   deploy: on push to main, run `make deploy`, signing in to Google Cloud with
+  #     Workload Identity Federation (no stored keys)
 
   ci-passed:
     name: CI passed

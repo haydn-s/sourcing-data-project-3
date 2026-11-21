@@ -1,7 +1,7 @@
 """Move files between local disk and Google Cloud Storage (gs:// URIs).
 
 Our bucket is publicly readable, so downloads try an anonymous request first:
-anyone can rerun training, and the API on Lambda can load the model, without a
+anyone can rerun training, and the API on Cloud Run can load the model, without a
 Google login. Only a private object falls back to your credentials. Uploads
 need credentials; without them, they're skipped with a warning instead of
 failing the run.

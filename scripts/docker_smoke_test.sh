@@ -1,7 +1,7 @@
 #!/bin/sh
 # Check of the Docker image (make docker-smoke): the image builds, its
-# packages import, and the data pipeline commands start, as the non-root user
-# Lambda uses. It's out of CI until the ML pipeline produces a model.
+# packages import, and the data pipeline commands start, as a non-root user.
+# It's out of CI until the ML pipeline produces a model.
 #
 # The train-and-serve check (train inside the container, then serve with a
 # read-only filesystem and call /health and /predict) needs a trained model,

@@ -15,7 +15,7 @@ updates:
       python-minor-and-patch:
         update-types: [minor, patch]
 
-  # The Python base image and the Lambda Web Adapter pinned in the Dockerfile
+  # The Python base image pinned in the Dockerfile
   - package-ecosystem: docker
     directory: /
     schedule:
@@ -25,6 +25,11 @@ updates:
     groups:
       docker-images:
         patterns: ["*"]
+    ignore:
+      # Python stays on the version PyDev and CI use (3.12): a new minor version
+      # can lack wheels for our pins (3.15 had none for PyYAML). Move all three together.
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: github-actions
     directory: /
