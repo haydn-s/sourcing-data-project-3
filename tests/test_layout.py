@@ -15,6 +15,8 @@ ALLOWED = {
     "data_pipeline": {"shared"},
     "ml_pipeline": {"shared"},
     "api": {"shared"},
+    # Deployed on its own with frontend/requirements.txt, so it imports none of them.
+    "frontend": set(),
 }
 
 

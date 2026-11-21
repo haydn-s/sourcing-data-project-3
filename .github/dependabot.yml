@@ -5,8 +5,8 @@
 version: 2
 updates:
   - package-ecosystem: pip
-    # Add "/frontend" once frontend/requirements.txt exists.
-    directories: ["/"]
+    # frontend/ has its own requirements.txt, for Streamlit Community Cloud.
+    directories: ["/", "/frontend"]
     schedule:
       interval: weekly
     commit-message:

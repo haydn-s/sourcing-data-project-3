@@ -1,0 +1,6 @@
+# The front-end's own dependencies. Streamlit Community Cloud installs this
+# file (the one beside the app) instead of the repo's requirements.txt, so the
+# app deploys without the pipeline's packages. PyDev includes it too.
+# Keep requests on the same version as requirements.txt.
+streamlit==1.67.0
+requests==2.34.2
