@@ -35,17 +35,21 @@ def _no_cloud_storage(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def sample_table(n_rows: int = 20, seed: int = 0) -> pd.DataFrame:
-    """A small made-up table with the feature and target columns config.yaml names."""
+    """A small made-up table with the feature and target columns config.yaml names.
+
+    Shaped like the weather dataset (README > Dataset), with random values.
+    """
     rng = np.random.default_rng(seed)
+    high = rng.normal(70, 15, n_rows).round()
     return pd.DataFrame(
         {
-            "customer_id": range(n_rows),
-            "age": rng.integers(18, 80, n_rows),
-            "monthly_spend": rng.uniform(5, 120, n_rows).round(2),
-            "support_calls": rng.integers(0, 6, n_rows),
-            "region": rng.choice(["north", "south", "east", "west"], n_rows),
-            "plan": rng.choice(["basic", "standard", "premium"], n_rows),
-            "churned": rng.choice(["yes", "no"], n_rows),
+            "date": pd.date_range("2024-01-01", periods=n_rows, freq="D"),
+            "station": rng.choice(["Asheville", "Raleigh Durham", "Wilmington"], n_rows),
+            "month": rng.choice(["January", "April", "July", "October"], n_rows),
+            "today_high_f": high,
+            "today_low_f": (high - rng.uniform(5, 25, n_rows)).round(),
+            "yesterday_high_f": (high + rng.normal(0, 6, n_rows)).round(),
+            "tomorrow_category": rng.choice(["expected", "extreme high", "extreme low"], n_rows),
         }
     )
 
@@ -59,6 +63,8 @@ def pipeline_config(
         [
             f"ingest.raw_dir={tmp_path / 'raw'}",
             "ingest.remote_prefix=null",  # tests opt in to uploads
+            "prepare.feature_steps=[]",  # and to feature steps, since the weather ones
+            "prepare.step_options={}",  # need weather data
             f"data.local_path={tmp_path / 'processed' / 'data.parquet'}",
             f"ingest.sources={json.dumps(sources)}",  # JSON is valid YAML
             *overrides,

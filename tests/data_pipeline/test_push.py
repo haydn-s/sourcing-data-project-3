@@ -37,7 +37,7 @@ def test_push_uploads_the_processed_table(tmp_path: Path, uploads: list) -> None
     [
         (["data.remote_uri=null"], "remote_uri isn't set"),
         (["data.local_path=nowhere.parquet"], "make prepare"),
-        (["features.numeric=[age, not_a_column]"], "lacks columns"),
+        (["features.numeric=[today_high_f, not_a_column]"], "lacks columns"),
     ],
 )
 def test_push_refuses_when_something_is_wrong(

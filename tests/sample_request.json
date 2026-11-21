@@ -1,7 +1,7 @@
 {
-  "age": 34,
-  "monthly_spend": 49.5,
-  "support_calls": 3,
-  "region": "south",
-  "plan": "standard"
+  "station": "Raleigh Durham",
+  "month": "July",
+  "today_high_f": 97.0,
+  "today_low_f": 75.0,
+  "yesterday_high_f": 95.0
 }

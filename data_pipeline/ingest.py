@@ -27,8 +27,9 @@ import logging
 import os
 import re
 import tempfile
+import time
 from collections.abc import Callable, Iterable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -327,20 +328,189 @@ def _selected_sources(cfg: PipelineConfig, only: Iterable[str] | None) -> list[S
 
 
 # Dataset-specific source types go below, registered with @source_type("<name>").
-# Use http_get() for requests and expand_env() for any ${NAME} values in
-# source.options. For example, an API that returns 1,000 rows per page:
-#
-# @source_type("paged_api")
-# def fetch_paged_api(source: SourceConfig) -> pd.DataFrame:
-#     url = expand_env(source.url, source=source.name)
-#     pages, offset = [], 1
-#     while True:
-#         params = {**expand_env(source.params, source=source.name), "offset": offset}
-#         payload = http_get(url, params=params, secrets=secrets_in(source)).json()
-#         pages.append(records_frame(payload, source.records, source=source.name))
-#         if len(pages[-1]) < 1000:
-#             return pd.concat(pages, ignore_index=True)
-#         offset += 1000
+# Use http_get() for requests and expand_env() for any ${NAME} values.
+
+
+def _required_url(source: SourceConfig) -> str:
+    if not source.url:
+        raise ValueError(f"source '{source.name}' has type {source.type}, so it needs a url")
+    return expand_env(source.url, source=source.name)
+
+
+NOAA_CDO_PAGE_SIZE = 1000  # the most results CDO returns per request
+NOAA_CDO_PAUSE_SECONDS = 0.25  # CDO allows 5 requests a second
+
+
+@source_type("noaa_cdo")
+def fetch_noaa_cdo(source: SourceConfig) -> pd.DataFrame:
+    """NOAA Climate Data Online (API v2), paging through every result.
+
+    `url` is the endpoint (e.g. .../cdo-web/api/v2/data) and `params` its query
+    (datasetid, stationid or locationid, startdate, enddate, ...). The token
+    goes in `headers: {token: "${NOAA_CDO_TOKEN}"}`. A list value, like several
+    stationid or datatypeid, is sent as repeated parameters, which is how CDO
+    takes them.
+
+    CDO also caps a query's date range (a year for daily data, ten years for
+    yearly), so `options.chunk_years: N` splits startdate..enddate into
+    windows of N calendar years and queries each one.
+    """
+    url = _required_url(source)
+    params = expand_env(source.params, source=source.name)
+    headers = expand_env(source.headers, source=source.name)
+    secrets = secrets_in(source)
+    windows = date_windows(params, source.options.get("chunk_years"), source=source.name)
+    frames = []
+    for start, end in windows:
+        query = params if start is None else {**params, "startdate": start, "enddate": end}
+        if start is not None:
+            log.info("%s: %s to %s", source.name, start, end)
+        frames.append(_noaa_cdo_pages(url, query, headers, secrets, source.name))
+    return pd.concat(frames, ignore_index=True)
+
+
+def _noaa_cdo_pages(
+    url: str, params: dict[str, Any], headers: dict[str, str], secrets: list[str], name: str
+) -> pd.DataFrame:
+    pages, offset = [], 1
+    while True:
+        page = {**params, "limit": NOAA_CDO_PAGE_SIZE, "offset": offset}
+        payload = http_get(url, params=page, headers=headers, secrets=secrets).json()
+        time.sleep(NOAA_CDO_PAUSE_SECONDS)
+        # CDO answers a query that matches nothing with an empty object.
+        results = payload.get("results", [])
+        pages.append(pd.json_normalize(results))
+        total = payload.get("metadata", {}).get("resultset", {}).get("count", 0)
+        offset += NOAA_CDO_PAGE_SIZE
+        if not results or offset > total:
+            return pd.concat(pages, ignore_index=True)
+        log.info("%s: fetched %d of %d results", name, offset - 1, total)
+
+
+def date_windows(
+    params: dict[str, Any], chunk_years: int | None, *, source: str
+) -> list[tuple[str | None, str | None]]:
+    """Split params' startdate..enddate into windows of `chunk_years` calendar years.
+
+    Returns [(None, None)], meaning one query as configured, when chunk_years isn't set.
+    """
+    if not chunk_years:
+        return [(None, None)]
+    try:
+        first = date.fromisoformat(str(params["startdate"])[:10])
+        last = date.fromisoformat(str(params["enddate"])[:10])
+    except (KeyError, ValueError) as err:
+        raise ValueError(
+            f"source '{source}': options.chunk_years needs params startdate and enddate "
+            "as YYYY-MM-DD"
+        ) from err
+    windows, year = [], first.year
+    while year <= last.year:
+        start = max(first, date(year, 1, 1))
+        end = min(last, date(year + int(chunk_years) - 1, 12, 31))
+        windows.append((start.isoformat(), end.isoformat()))
+        year += int(chunk_years)
+    return windows
+
+
+@source_type("noaa_cdo_stations")
+def fetch_noaa_cdo_stations(source: SourceConfig) -> pd.DataFrame:
+    """Metadata for the NOAA CDO stations in `options.station_ids`: name, location, elevation.
+
+    `url` is .../cdo-web/api/v2/stations, and the token goes in the headers as
+    for noaa_cdo. It asks for each station by id (`<url>/<id>`), since CDO's
+    station list ignores a stationid filter.
+    """
+    station_ids = source.options.get("station_ids")
+    if not station_ids:
+        raise ValueError(
+            f"source '{source.name}' needs options.station_ids, the stations to look up"
+        )
+    url = _required_url(source).rstrip("/")
+    headers = expand_env(source.headers, source=source.name)
+    secrets = secrets_in(source)
+    records = []
+    for station_id in station_ids:
+        records.append(http_get(f"{url}/{station_id}", headers=headers, secrets=secrets).json())
+        time.sleep(NOAA_CDO_PAUSE_SECONDS)
+    return pd.json_normalize(records)
+
+
+@source_type("earthdata_timeseries")
+def fetch_earthdata_timeseries(source: SourceConfig) -> pd.DataFrame:
+    """The newest file of a NASA Earthdata collection holding a plain-text time series.
+
+    Made for GRACE's Greenland and Antarctic ice mass (PO.DAAC), whose file name
+    changes with every monthly update. `url` and `params` query NASA's public
+    catalog (CMR) for the newest file, e.g. params {short_name: ..., sort_key:
+    -start_date, page_size: 1}. The download needs an Earthdata token, in
+    `headers: {Authorization: "Bearer ${EARTHDATA_TOKEN}"}`. `options.columns`
+    names the file's whitespace-separated columns, in order, and lines starting
+    with `options.header_prefix` (default HDR) are skipped. A `granule` column
+    records which file the rows came from.
+    """
+    columns = source.options.get("columns")
+    if not columns:
+        raise ValueError(f"source '{source.name}' needs options.columns, the file's column names")
+    granule, data_url = latest_granule(source)
+    log.info("%s: the newest file is %s", source.name, data_url)
+    response = http_get(
+        data_url,
+        headers=expand_env(source.headers, source=source.name),
+        secrets=secrets_in(source),
+    )
+    if "html" in response.headers.get("Content-Type", "").lower():
+        # Earthdata answers a missing, wrong, or expired token with its sign-in page.
+        raise PermissionError(
+            f"source '{source.name}': Earthdata sent a sign-in page instead of the file. "
+            "Check EARTHDATA_TOKEN in .env, or generate a new one at https://urs.earthdata.nasa.gov"
+        )
+    text = response_text(response)
+    frame = read_text_columns(
+        text, columns, header_prefix=source.options.get("header_prefix", "HDR"), source=source.name
+    )
+    return frame.assign(granule=granule)
+
+
+def latest_granule(source: SourceConfig) -> tuple[str, str]:
+    """Ask CMR for the source's newest granule. Returns its title and download URL."""
+    payload = http_get(_required_url(source), params=expand_env(source.params, source=source.name))
+    entries = payload.json().get("feed", {}).get("entry", [])
+    if not entries:
+        raise ValueError(
+            f"source '{source.name}': NASA's catalog found no files for {source.params}. "
+            "Check params.short_name"
+        )
+    granule = entries[0]
+    # The granule's own download link. Links marked `inherited` come from the
+    # collection (search pages, docs) and aren't the file.
+    for link in granule.get("links", []):
+        href = link.get("href", "")
+        is_data = link.get("rel", "").endswith("/data#") and href.startswith("https://")
+        if is_data and not link.get("inherited"):
+            return granule.get("title", href.rsplit("/", 1)[-1]), href
+    raise ValueError(f"source '{source.name}': granule {granule.get('title')} has no download link")
+
+
+def read_text_columns(
+    text: str, columns: list[str], *, header_prefix: str, source: str
+) -> pd.DataFrame:
+    """Read whitespace-separated columns, skipping blank lines and header lines."""
+    rows = [
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith(header_prefix)
+    ]
+    if not rows:
+        raise ValueError(f"source '{source}': the file has no data rows")
+    frame = pd.read_csv(io.StringIO("\n".join(rows)), sep=r"\s+", header=None)
+    if frame.shape[1] != len(columns):
+        raise ValueError(
+            f"source '{source}': the file has {frame.shape[1]} columns, but options.columns "
+            f"names {len(columns)}: {columns}"
+        )
+    frame.columns = columns
+    return frame
 
 
 def main(argv: list[str] | None = None) -> dict[str, Any]:

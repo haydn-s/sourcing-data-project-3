@@ -2,9 +2,10 @@
 
 A config file can inherit from another one with `extends:` (a path relative to
 the file) and override only what changes. Mappings merge key by key, except
-`model.params`, which is replaced as a whole so each variant lists exactly the
-hyperparameters it uses. Single values can also be overridden from the command
-line with `--set key.path=value`.
+`model.params` and `prepare.step_options`, which are replaced as a whole so
+each variant lists exactly the hyperparameters (or step options) it uses.
+Single values can also be overridden from the command line with
+`--set key.path=value`.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ METRICS: dict[str, tuple[str, ...]] = {
 }
 
 # Merged paths that a child config replaces instead of merging into.
-_REPLACE_ON_MERGE = {("model", "params")}
+_REPLACE_ON_MERGE = {("model", "params"), ("prepare", "step_options")}
 
 
 class _Section(BaseModel):
@@ -90,6 +91,17 @@ class IngestConfig(_Section):
 class PrepareConfig(_Section):
     # Names of feature steps in data_pipeline/prepare.py, applied in order after the join.
     feature_steps: list[str] = Field(default_factory=list)
+    # Keyword arguments for those steps, by step name: {step: {argument: value}}.
+    step_options: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_step_options(self) -> PrepareConfig:
+        unknown = sorted(set(self.step_options) - set(self.feature_steps))
+        if unknown:
+            raise ValueError(
+                f"prepare.step_options names steps that aren't in feature_steps: {unknown}"
+            )
+        return self
 
 
 class FeaturesConfig(_Section):

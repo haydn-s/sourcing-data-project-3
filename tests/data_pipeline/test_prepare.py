@@ -11,7 +11,7 @@ import pytest
 from data_pipeline import prepare
 from data_pipeline.ingest import ingest
 from shared.config import SourceConfig
-from tests.conftest import pipeline_config, sample_table
+from tests.conftest import pipeline_config
 
 
 @pytest.mark.parametrize(
@@ -109,7 +109,14 @@ def write_csv(path: Path, data: pd.DataFrame) -> str:
 @pytest.fixture
 def two_sources(tmp_path: Path) -> list[dict]:
     """A customers table plus a region lookup table."""
-    customers = sample_table(n_rows=60)
+    rng = np.random.default_rng(0)
+    customers = pd.DataFrame(
+        {
+            "customer_id": range(60),
+            "region": rng.choice(["north", "south", "east", "west"], 60),
+            "monthly_spend": rng.uniform(5, 120, 60).round(2),
+        }
+    )
     regions = pd.DataFrame(
         {"Region": ["north", "south", "east", "west"], "Avg Income": [50, 40, 60, 55]}
     )

@@ -44,8 +44,8 @@ def test_set_requires_key_equals_value() -> None:
     [
         ("split.test_size=0.9", "leave rows for training"),
         ("evaluation.primary_metric=rmse", "isn't available for classification"),
-        ("features.numeric=[churned]", "also listed as a feature"),
-        ("features.categorical=[age]", "listed more than once"),
+        ("features.numeric=[tomorrow_category]", "also listed as a feature"),
+        ("features.categorical=[today_high_f]", "listed more than once"),
         ("model.type=svm", "model.type"),
         ("data.remote_uri=https://example.org/data.csv", "must be a gs:// URI"),
         ("ingest.remote_prefix=bucket/raw", "must be a gs:// URI"),
@@ -111,3 +111,16 @@ def test_sources_parse_with_defaults() -> None:
 def test_invalid_sources_are_rejected(sources: str, message: str) -> None:
     with pytest.raises(ValidationError, match=message):
         load_config(REPO_CONFIG, [f"ingest.sources={sources}"])
+
+
+def test_step_options_must_name_a_configured_step() -> None:
+    with pytest.raises(ValidationError, match="aren't in feature_steps"):
+        load_config(REPO_CONFIG, ["prepare.step_options={nope: {a: 1}}"])
+
+
+def test_demo_variant_replaces_the_weather_settings() -> None:
+    demo = load_config(REPO_CONFIG.parent / "configs" / "demo.yaml")
+    assert demo.data.target == "churned"
+    assert demo.prepare.feature_steps == []
+    assert demo.prepare.step_options == {}  # replaced, not merged with config.yaml's
+    assert [source.name for source in demo.ingest.sources] == ["customers"]
